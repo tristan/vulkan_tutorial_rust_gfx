@@ -172,6 +172,37 @@ impl <B: Backend> IndexBuffer<B> {
     }
 }
 
+pub(super) struct UniformBuffer<B: Backend>(BufferState<B>);
+
+impl <B: Backend> UniformBuffer<B> {
+    pub(super) unsafe fn new<T>(
+        device_ptr: Rc<RefCell<DeviceState<B>>>,
+        memory_types: &[MemoryType],
+    ) -> Self where T: Copy {
+        let buffer_size = std::mem::size_of::<T>() as u64;
+
+        let uniform_buffer = BufferState::new::<T>(
+            Rc::clone(&device_ptr),
+            buffer_size,
+            Usage::UNIFORM,
+            Properties::CPU_VISIBLE | Properties::COHERENT,
+            memory_types
+        );
+
+        UniformBuffer(uniform_buffer)
+    }
+
+    pub unsafe fn update_data<T>(&mut self, data_source: &[T]) where T: Copy {
+        let device = &self.0.device.borrow().device;
+        let memory = self.0.memory.as_mut().unwrap();
+        let mut data_target = device
+            .acquire_mapping_writer::<T>(&memory, 0..self.0.size)
+            .unwrap();
+        data_target[0..data_source.len()].copy_from_slice(data_source);
+        device.release_mapping_writer(data_target).unwrap();
+    }
+}
+
 
 unsafe fn copy_command_buffer<B>(
     device_ptr: &Rc<RefCell<DeviceState<B>>>,

@@ -2,6 +2,7 @@ extern crate winit;
 extern crate gfx_hal;
 extern crate env_logger;
 extern crate log;
+extern crate nalgebra_glm as glm;
 
 mod consts;
 mod window;

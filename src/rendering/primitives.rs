@@ -54,3 +54,14 @@ pub(super) const VERTICIES: [Vertex; 4] = [
 pub(super) const INDICIES: [u16; 6] = [
     0, 1, 2, 2, 3, 0
 ];
+
+//#[derive(Debug, Clone, Copy)]
+//pub struct Mat4([[f32; 4]; 4]);
+use glm::Mat4;
+
+#[derive(Debug, Clone, Copy)]
+pub struct UniformBufferObject {
+    pub model: Mat4,
+    pub view: Mat4,
+    pub proj: Mat4
+}

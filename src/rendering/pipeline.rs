@@ -17,14 +17,14 @@ pub(super) struct PipelineState<B: Backend> {
 }
 
 impl<B: Backend> PipelineState<B> {
-    pub(super) unsafe fn new(
+    pub(super) unsafe fn new<IS>(
         device_ptr: Rc<RefCell<DeviceState<B>>>,
+        desc_layouts: IS,
         render_pass: &B::RenderPass,
         swapchain: &SwapchainState<B>,
-    ) -> Self {
+    ) -> Self
+    where IS: IntoIterator, IS::Item: std::borrow::Borrow<B::DescriptorSetLayout> {
         let device = &device_ptr.borrow().device;
-
-        let desc_layouts = Vec::<B::DescriptorSetLayout>::new();
 
         let pipeline_layout = device
             .create_pipeline_layout(desc_layouts, &[])

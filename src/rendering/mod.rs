@@ -36,6 +36,7 @@ use gfx_hal::format::{AsFormat, Rgba8Srgb as ColorFormat};
 use crate::window::WindowState;
 use crate::consts::{APP_TITLE, APP_VERSION};
 
+mod utils;
 mod primitives;
 mod adapter;
 mod device;
@@ -45,6 +46,7 @@ mod pipeline;
 mod framebuffer;
 mod commandbuffer;
 mod buffer;
+mod descriptor_set_layout;
 
 use adapter::AdapterState;
 use device::DeviceState;
@@ -53,7 +55,8 @@ use render_pass::RenderPassState;
 use pipeline::PipelineState;
 use framebuffer::FramebufferState;
 use commandbuffer::CommandBufferState;
-use buffer::{VertexBuffer, IndexBuffer};
+use buffer::{VertexBuffer, IndexBuffer, UniformBuffer};
+use descriptor_set_layout::DescriptorSetLayout;
 
 pub struct BackendState<B: Backend> {
     surface: B::Surface,
@@ -111,10 +114,12 @@ pub struct RendererState<B: Backend> {
     backend: BackendState<B>,
     window: WindowState,
     render_pass: RenderPassState<B>,
+    descriptor_set_layout: DescriptorSetLayout<B>,
     pipeline: PipelineState<B>,
     framebuffer: FramebufferState<B>,
     vertex_buffer: VertexBuffer<B>,
     index_buffer: IndexBuffer<B>,
+    uniform_buffers: Vec<UniformBuffer<B>>,
     commandbuffer: CommandBufferState<B>,
     viewport: pso::Viewport,
 }
@@ -131,8 +136,21 @@ impl<B: Backend> RendererState<B> {
 
         let render_pass = RenderPassState::new(swapchain.as_ref().unwrap(), Rc::clone(&device));
 
+        let descriptor_set_layout = DescriptorSetLayout::new(
+            Rc::clone(&device),
+            vec![
+                pso::DescriptorSetLayoutBinding {
+                    binding: 0,
+                    ty: pso::DescriptorType::UniformBuffer,
+                    count: 1,
+                    stage_flags: pso::ShaderStageFlags::VERTEX,
+                    immutable_samplers: false,
+                }
+            ]);
+
         let pipeline = PipelineState::new(
             Rc::clone(&device),
+            vec![descriptor_set_layout.get_layout()],
             render_pass.render_pass.as_ref().unwrap(),
             swapchain.as_ref().unwrap()
         );
@@ -155,6 +173,14 @@ impl<B: Backend> RendererState<B> {
             &backend.adapter.memory_types
         );
 
+        let num_buffers = framebuffer.framebuffers.as_ref().unwrap().len();
+        let uniform_buffers = (0..num_buffers).map(|_| {
+            UniformBuffer::new::<primitives::UniformBufferObject>(
+                Rc::clone(&device),
+                &backend.adapter.memory_types
+            )
+        }).collect();
+
         let commandbuffer = CommandBufferState::new(
             Rc::clone(&device),
             &mut framebuffer,
@@ -175,10 +201,12 @@ impl<B: Backend> RendererState<B> {
             backend,
             window,
             render_pass,
+            descriptor_set_layout,
             pipeline,
             framebuffer,
             vertex_buffer,
             index_buffer,
+            uniform_buffers,
             commandbuffer,
             viewport
         }
@@ -204,9 +232,24 @@ impl<B: Backend> RendererState<B> {
             )
         };
 
+        self.descriptor_set_layout = unsafe {
+            DescriptorSetLayout::new(
+            Rc::clone(&self.device),
+            vec![
+                pso::DescriptorSetLayoutBinding {
+                    binding: 0,
+                    ty: pso::DescriptorType::UniformBuffer,
+                    count: 1,
+                    stage_flags: pso::ShaderStageFlags::VERTEX,
+                    immutable_samplers: false,
+                }
+            ])
+        };
+
         self.pipeline = unsafe {
             PipelineState::new(
                 Rc::clone(&self.device),
+                vec![self.descriptor_set_layout.get_layout()],
                 self.render_pass.render_pass.as_ref().unwrap(),
                 self.swapchain.as_mut().unwrap(),
             )
@@ -227,6 +270,16 @@ impl<B: Backend> RendererState<B> {
                 &primitives::INDICIES,
                 &self.backend.adapter.memory_types,
             )
+        };
+
+        self.uniform_buffers = unsafe {
+            let num_buffers = self.framebuffer.framebuffers.as_ref().unwrap().len();
+            (0..num_buffers).map(|_| {
+                UniformBuffer::new::<primitives::UniformBufferObject>(
+                    Rc::clone(&self.device),
+                    &self.backend.adapter.memory_types
+                )
+            }).collect()
         };
 
         self.commandbuffer = unsafe {
@@ -258,7 +311,7 @@ impl<B: Backend> RendererState<B> {
         }
     }
 
-    fn draw_frame(&mut self, frame_number: usize) -> bool {
+    fn draw_frame(&mut self, start_time: &std::time::Instant, frame_number: usize) -> bool {
         let current_frame = frame_number % commandbuffer::MAX_FRAMES_IN_FLIGHT;
         let acquire_semaphore = &self.commandbuffer
             .acquire_semaphores.as_ref().unwrap()[current_frame];
@@ -303,7 +356,38 @@ impl<B: Backend> RendererState<B> {
             signal_semaphores: std::iter::once(&present_semaphore)
         };
 
+        // update UBO
+        let time: f32 = utils::as_float_secs(&start_time.elapsed());
+        let swapchain_extent = &self.swapchain
+            .as_ref()
+            .unwrap()
+            .extent;
+        let rad90 = {
+            glm::radians(&glm::vec1(90.0))[0]
+        };
+        let rad45 = {
+            glm::radians(&glm::vec1(45.0))[0]
+        };
+        let ubo = primitives::UniformBufferObject {
+            model: glm::rotate(
+                &glm::make_mat4(&[1.0]),
+                rad90 * time,
+                &glm::vec3(0.0, 0.0, 1.0)),
+            view: glm::look_at(
+                &glm::vec3(2.0, 2.0, 2.0),
+                &glm::vec3(0.0, 0.0, 0.0),
+                &glm::vec3(0.0, 0.0, 1.0)),
+            proj: glm::perspective_lh(
+                utils::ratio(swapchain_extent.width, swapchain_extent.height),
+                rad45,
+                0.1,
+                10.0)
+        };
+        let uniform_buffer = &mut self.uniform_buffers[frame as usize];
+
         unsafe {
+            uniform_buffer.update_data(&[&ubo]);
+
             {
                 let device = &self.device.borrow().device;
                 device.reset_fence(&fence).unwrap();
@@ -347,6 +431,7 @@ impl<B: Backend> RendererState<B> {
     pub fn mainloop(&mut self) {
         let mut running = true;
         let mut frame_number = 0;
+        let start_time = std::time::Instant::now();
         while running {
             self.window.events_loop.poll_events(|event| {
                 if let winit::Event::WindowEvent { event, .. } = event {
@@ -370,7 +455,7 @@ impl<B: Backend> RendererState<B> {
                     }
                 }
             });
-            if self.draw_frame(frame_number) == false {
+            if self.draw_frame(&start_time, frame_number) == false {
                 self.recreate_swapchain();
                 continue;
             };
