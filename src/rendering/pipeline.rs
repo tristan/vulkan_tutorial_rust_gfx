@@ -12,7 +12,7 @@ const ENTRY_NAME: &str = "main";
 
 pub(super) struct PipelineState<B: Backend> {
     pub(super) pipeline: Option<B::GraphicsPipeline>,
-    pipeline_layout: Option<B::PipelineLayout>,
+    pub(super) pipeline_layout: Option<B::PipelineLayout>,
     device: Rc<RefCell<DeviceState<B>>>
 }
 
@@ -71,7 +71,7 @@ impl<B: Backend> PipelineState<B> {
                     pso::Rasterizer {
                         polygon_mode: pso::PolygonMode::Fill,
                         cull_face: pso::Face::BACK,
-                        front_face: pso::FrontFace::Clockwise,
+                        front_face: pso::FrontFace::CounterClockwise,
                         depth_clamping: false,
                         depth_bias: None,
                         conservative: false,

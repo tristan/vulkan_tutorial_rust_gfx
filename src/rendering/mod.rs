@@ -46,7 +46,7 @@ mod pipeline;
 mod framebuffer;
 mod commandbuffer;
 mod buffer;
-mod descriptor_set_layout;
+mod descriptors;
 
 use adapter::AdapterState;
 use device::DeviceState;
@@ -56,7 +56,7 @@ use pipeline::PipelineState;
 use framebuffer::FramebufferState;
 use commandbuffer::CommandBufferState;
 use buffer::{VertexBuffer, IndexBuffer, UniformBuffer};
-use descriptor_set_layout::DescriptorSetLayout;
+use descriptors::DescriptorSetLayout;
 
 pub struct BackendState<B: Backend> {
     surface: B::Surface,
@@ -114,11 +114,12 @@ pub struct RendererState<B: Backend> {
     backend: BackendState<B>,
     window: WindowState,
     render_pass: RenderPassState<B>,
-    descriptor_set_layout: DescriptorSetLayout<B>,
+    desc_set_layout: DescriptorSetLayout<B>,
     pipeline: PipelineState<B>,
     framebuffer: FramebufferState<B>,
     vertex_buffer: VertexBuffer<B>,
     index_buffer: IndexBuffer<B>,
+    uniform_desc_pool: Option<B::DescriptorPool>,
     uniform_buffers: Vec<UniformBuffer<B>>,
     commandbuffer: CommandBufferState<B>,
     viewport: pso::Viewport,
@@ -136,7 +137,7 @@ impl<B: Backend> RendererState<B> {
 
         let render_pass = RenderPassState::new(swapchain.as_ref().unwrap(), Rc::clone(&device));
 
-        let descriptor_set_layout = DescriptorSetLayout::new(
+        let desc_set_layout = DescriptorSetLayout::new(
             Rc::clone(&device),
             vec![
                 pso::DescriptorSetLayoutBinding {
@@ -150,7 +151,7 @@ impl<B: Backend> RendererState<B> {
 
         let pipeline = PipelineState::new(
             Rc::clone(&device),
-            vec![descriptor_set_layout.get_layout()],
+            vec![desc_set_layout.get_layout()],
             render_pass.render_pass.as_ref().unwrap(),
             swapchain.as_ref().unwrap()
         );
@@ -173,13 +174,40 @@ impl<B: Backend> RendererState<B> {
             &backend.adapter.memory_types
         );
 
+        // TODO: all this in one constructor
+
         let num_buffers = framebuffer.framebuffers.as_ref().unwrap().len();
-        let uniform_buffers = (0..num_buffers).map(|_| {
-            UniformBuffer::new::<primitives::UniformBufferObject>(
-                Rc::clone(&device),
-                &backend.adapter.memory_types
+
+        let mut uniform_desc_pool = device
+            .borrow()
+            .device
+            .create_descriptor_pool(
+                num_buffers,
+                &[pso::DescriptorRangeDesc {
+                    ty: pso::DescriptorType::UniformBuffer,
+                    count: num_buffers,
+                }],
+                pso::DescriptorPoolCreateFlags::empty(),
             )
-        }).collect();
+            .ok();
+
+        let uniform_desc_sets = desc_set_layout.create_desc_sets(
+            uniform_desc_pool.as_mut().unwrap(),
+            num_buffers
+        );
+
+        let uniform_buffers = uniform_desc_sets
+            .into_iter()
+            .map(|desc| {
+                UniformBuffer::new::<primitives::UniformBufferObject>(
+                    Rc::clone(&device),
+                    &backend.adapter.memory_types,
+                    desc,
+                    0
+            )
+            }).collect();
+
+        // ------------------
 
         let commandbuffer = CommandBufferState::new(
             Rc::clone(&device),
@@ -189,7 +217,8 @@ impl<B: Backend> RendererState<B> {
             &pipeline,
             &vertex_buffer,
             &index_buffer,
-            primitives::INDICIES.len() as _
+            primitives::INDICIES.len() as _,
+            &uniform_buffers
         );
 
         let viewport = RendererState::create_viewport(
@@ -201,11 +230,12 @@ impl<B: Backend> RendererState<B> {
             backend,
             window,
             render_pass,
-            descriptor_set_layout,
+            desc_set_layout,
             pipeline,
             framebuffer,
             vertex_buffer,
             index_buffer,
+            uniform_desc_pool,
             uniform_buffers,
             commandbuffer,
             viewport
@@ -232,7 +262,7 @@ impl<B: Backend> RendererState<B> {
             )
         };
 
-        self.descriptor_set_layout = unsafe {
+        self.desc_set_layout = unsafe {
             DescriptorSetLayout::new(
             Rc::clone(&self.device),
             vec![
@@ -249,7 +279,7 @@ impl<B: Backend> RendererState<B> {
         self.pipeline = unsafe {
             PipelineState::new(
                 Rc::clone(&self.device),
-                vec![self.descriptor_set_layout.get_layout()],
+                vec![self.desc_set_layout.get_layout()],
                 self.render_pass.render_pass.as_ref().unwrap(),
                 self.swapchain.as_mut().unwrap(),
             )
@@ -272,15 +302,42 @@ impl<B: Backend> RendererState<B> {
             )
         };
 
-        self.uniform_buffers = unsafe {
+        unsafe {
+            self.device
+                .borrow()
+                .device
+                .destroy_descriptor_pool(self.uniform_desc_pool.take().unwrap());
+
             let num_buffers = self.framebuffer.framebuffers.as_ref().unwrap().len();
-            (0..num_buffers).map(|_| {
-                UniformBuffer::new::<primitives::UniformBufferObject>(
-                    Rc::clone(&self.device),
-                    &self.backend.adapter.memory_types
+            self.uniform_desc_pool = self.device
+                .borrow()
+                .device
+                .create_descriptor_pool(
+                    num_buffers,
+                    &[pso::DescriptorRangeDesc {
+                        ty: pso::DescriptorType::UniformBuffer,
+                        count: num_buffers,
+                    }],
+                    pso::DescriptorPoolCreateFlags::empty(),
                 )
-            }).collect()
-        };
+                .ok();
+
+            let uniform_desc_sets = self.desc_set_layout.create_desc_sets(
+                self.uniform_desc_pool.as_mut().unwrap(),
+                num_buffers
+            );
+
+            self.uniform_buffers = uniform_desc_sets
+                .into_iter()
+                .map(|desc| {
+                    UniformBuffer::new::<primitives::UniformBufferObject>(
+                        Rc::clone(&self.device),
+                        &self.backend.adapter.memory_types,
+                        desc,
+                        0
+                    )
+                }).collect();
+        }
 
         self.commandbuffer = unsafe {
             CommandBufferState::new(
@@ -291,7 +348,8 @@ impl<B: Backend> RendererState<B> {
                 &self.pipeline,
                 &self.vertex_buffer,
                 &self.index_buffer,
-                primitives::INDICIES.len() as _
+                primitives::INDICIES.len() as _,
+                &self.uniform_buffers
             )
         };
 
@@ -368,25 +426,27 @@ impl<B: Backend> RendererState<B> {
         let rad45 = {
             glm::radians(&glm::vec1(45.0))[0]
         };
-        let ubo = primitives::UniformBufferObject {
+        let mut ubo = primitives::UniformBufferObject {
             model: glm::rotate(
-                &glm::make_mat4(&[1.0]),
-                rad90 * time,
+                &glm::Mat4::identity(),
+                time * rad90,
                 &glm::vec3(0.0, 0.0, 1.0)),
             view: glm::look_at(
                 &glm::vec3(2.0, 2.0, 2.0),
                 &glm::vec3(0.0, 0.0, 0.0),
                 &glm::vec3(0.0, 0.0, 1.0)),
-            proj: glm::perspective_lh(
+            proj: glm::perspective(
                 utils::ratio(swapchain_extent.width, swapchain_extent.height),
                 rad45,
                 0.1,
                 10.0)
         };
+        ubo.proj[1 * 4 + 1] *= -1.0;
+
         let uniform_buffer = &mut self.uniform_buffers[frame as usize];
+        uniform_buffer.update_data(0, &[ubo]);
 
         unsafe {
-            uniform_buffer.update_data(&[&ubo]);
 
             {
                 let device = &self.device.borrow().device;
@@ -465,5 +525,18 @@ impl<B: Backend> RendererState<B> {
             }
         }
         self.device.borrow().device.wait_idle().unwrap();
+    }
+}
+
+impl<B: Backend> Drop for RendererState<B> {
+    fn drop(&mut self) {
+        self.device.borrow().device.wait_idle().unwrap();
+        unsafe {
+            self.device
+                .borrow()
+                .device
+                .destroy_descriptor_pool(self.uniform_desc_pool.take().unwrap());
+            self.swapchain.take();
+        }
     }
 }

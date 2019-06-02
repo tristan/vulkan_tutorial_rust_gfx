@@ -9,7 +9,7 @@ use gfx_hal::buffer::IndexBufferView;
 use super::device::DeviceState;
 use super::framebuffer::FramebufferState;
 use super::render_pass::RenderPassState;
-use super::buffer::{IndexBuffer, VertexBuffer};
+use super::buffer::{IndexBuffer, VertexBuffer, UniformBuffer};
 use super::swapchain::SwapchainState;
 use super::pipeline::PipelineState;
 
@@ -34,6 +34,7 @@ impl<B: Backend> CommandBufferState<B> {
         vertex_buffer: &VertexBuffer<B>,
         index_buffer: &IndexBuffer<B>,
         index_count: u32,
+        uniform_buffers: &Vec<UniformBuffer<B>>
     ) -> Self {
         let frame_images = framebuffer_state.frame_images
             .as_ref().unwrap();
@@ -71,6 +72,7 @@ impl<B: Backend> CommandBufferState<B> {
         for i in 0..iter_count {
             let cmd_buffer = &mut command_buffers[i];
             let framebuffer = &framebuffers[i];
+            let uniform_buffer = &uniform_buffers[i];
             cmd_buffer.begin(true);
 
             {
@@ -98,6 +100,12 @@ impl<B: Backend> CommandBufferState<B> {
                     offset: 0,
                     index_type: index_buffer.index_type()
                 });
+                encoder.bind_graphics_descriptor_sets(
+                    pipeline.pipeline_layout.as_ref().unwrap(),
+                    0,
+                    vec![uniform_buffer.get_descriptor_set()],
+                    &[]
+                );
                 encoder.draw_indexed(0..index_count, 0, 0..1);
 
                 // explicit end_render_pass on Drop

@@ -65,3 +65,13 @@ pub struct UniformBufferObject {
     pub view: Mat4,
     pub proj: Mat4
 }
+
+impl UniformBufferObject {
+    pub fn center() -> Self {
+        UniformBufferObject {
+            model: Mat4::identity(),
+            view: Mat4::identity(),
+            proj: Mat4::identity()
+        }
+    }
+}

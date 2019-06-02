@@ -5,7 +5,10 @@ use gfx_hal::buffer::Usage;
 use gfx_hal::command;
 use gfx_hal::memory::Properties;
 use gfx_hal::pool;
+use gfx_hal::pso;
+
 use super::device::DeviceState;
+use super::descriptors::DescriptorSet;
 
 pub(super) struct BufferState<B: Backend> {
     memory: Option<B::Memory>,
@@ -59,14 +62,23 @@ impl <B: Backend> BufferState<B> {
         }
     }
 
-    unsafe fn update_data<T>(&mut self, data_source: &[T]) where T: Copy {
+    fn update_data<T>(&mut self, offset: u64, data_source: &[T]) where T: Copy {
         let device = &self.device.borrow().device;
+        let stride = std::mem::size_of::<T>() as u64;
+        let upload_size = data_source.len() as u64 * stride;
+
+        assert!(offset + upload_size <= self.size);
+
         let memory = self.memory.as_mut().unwrap();
-        let mut data_target = device
-            .acquire_mapping_writer::<T>(&memory, 0..self.size)
-            .unwrap();
-        data_target[0..data_source.len()].copy_from_slice(data_source);
-        device.release_mapping_writer(data_target).unwrap();
+        unsafe {
+            let mut data_target = device
+                .acquire_mapping_writer::<T>(
+                    &memory, offset..self.size)
+                .unwrap();
+            data_target[0..data_source.len()].copy_from_slice(
+                data_source);
+            device.release_mapping_writer(data_target).unwrap();
+        }
     }
 }
 
@@ -99,7 +111,7 @@ impl <B: Backend> VertexBuffer<B> {
             Properties::CPU_VISIBLE | Properties::COHERENT,
             memory_types
         );
-        staging_buffer.update_data(data_source);
+        staging_buffer.update_data(0, data_source);
 
         let vertex_buffer = BufferState::new::<T>(
             Rc::clone(&device_ptr),
@@ -142,7 +154,7 @@ impl <B: Backend> IndexBuffer<B> {
             Properties::CPU_VISIBLE | Properties::COHERENT,
             memory_types
         );
-        staging_buffer.update_data(data_source);
+        staging_buffer.update_data(0, data_source);
 
         let index_buffer = BufferState::new::<T>(
             Rc::clone(&device_ptr),
@@ -172,16 +184,18 @@ impl <B: Backend> IndexBuffer<B> {
     }
 }
 
-pub(super) struct UniformBuffer<B: Backend>(BufferState<B>);
+pub(super) struct UniformBuffer<B: Backend>(BufferState<B>, DescriptorSet<B>);
 
 impl <B: Backend> UniformBuffer<B> {
     pub(super) unsafe fn new<T>(
         device_ptr: Rc<RefCell<DeviceState<B>>>,
         memory_types: &[MemoryType],
+        desc: DescriptorSet<B>,
+        binding: u32
     ) -> Self where T: Copy {
         let buffer_size = std::mem::size_of::<T>() as u64;
 
-        let uniform_buffer = BufferState::new::<T>(
+        let buffer = BufferState::new::<T>(
             Rc::clone(&device_ptr),
             buffer_size,
             Usage::UNIFORM,
@@ -189,17 +203,31 @@ impl <B: Backend> UniformBuffer<B> {
             memory_types
         );
 
-        UniformBuffer(uniform_buffer)
+        let device = &device_ptr.borrow().device;
+
+        let set = desc.set.as_ref().unwrap();
+        let write = vec![
+            pso::DescriptorSetWrite {
+                binding: binding,
+                array_offset: 0,
+                descriptors: Some(pso::Descriptor::Buffer(
+                    (&buffer).get_buffer(),
+                    None..None)),
+                set: set
+            }
+        ];
+
+        device.write_descriptor_sets(write);
+
+        UniformBuffer(buffer, desc)
     }
 
-    pub unsafe fn update_data<T>(&mut self, data_source: &[T]) where T: Copy {
-        let device = &self.0.device.borrow().device;
-        let memory = self.0.memory.as_mut().unwrap();
-        let mut data_target = device
-            .acquire_mapping_writer::<T>(&memory, 0..self.0.size)
-            .unwrap();
-        data_target[0..data_source.len()].copy_from_slice(data_source);
-        device.release_mapping_writer(data_target).unwrap();
+    pub fn update_data<T>(&mut self, offset: u64, data_source: &[T]) where T: Copy {
+        self.0.update_data(offset, data_source);
+    }
+
+    pub(super) fn get_descriptor_set(&self) -> &B::DescriptorSet {
+        self.1.set.as_ref().unwrap()
     }
 }
 
