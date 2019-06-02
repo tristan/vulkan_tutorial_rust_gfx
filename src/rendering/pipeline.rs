@@ -97,9 +97,10 @@ impl<B: Backend> PipelineState<B> {
                     h: swapchain.extent.height as _,
                 });
 
+                pipeline_desc.blender.logic_op = Some(pso::LogicOp::Copy);
                 pipeline_desc.blender.targets.push(pso::ColorBlendDesc(
                     pso::ColorMask::ALL,
-                    pso::BlendState::ADD
+                    pso::BlendState::Off
                 ));
 
                 pipeline_desc.vertex_buffers.push(

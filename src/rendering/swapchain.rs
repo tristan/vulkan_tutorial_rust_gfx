@@ -29,10 +29,10 @@ impl<B: Backend> SwapchainState<B> {
             .surface
             .compatibility(&device.borrow().physical_device);
         debug!("formats: {:?}", formats);
-        let format = formats.map_or(Format::Rgba8Srgb, |formats| {
+        let format = formats.map_or(Format::Bgra8Unorm, |formats| {
             formats
                 .iter()
-                .find(|format| format.base_format().1 == ChannelType::Srgb)
+                .find(|format| format.base_format().1 == ChannelType::Unorm)
                 .map(|format| *format)
                 .unwrap_or(formats[0])
         });
