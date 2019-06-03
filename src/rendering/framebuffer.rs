@@ -2,16 +2,12 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use gfx_hal::{Backend, Device};
 use gfx_hal::format;
-use gfx_hal::image::{Extent, SubresourceRange, ViewKind};
+use gfx_hal::image::{Extent, ViewKind};
 use super::device::DeviceState;
 use super::render_pass::RenderPassState;
 use super::swapchain::SwapchainState;
 
-const COLOR_RANGE: SubresourceRange = SubresourceRange {
-    aspects: format::Aspects::COLOR,
-    levels: 0..1,
-    layers: 0..1,
-};
+use super::constants::COLOR_RANGE;
 
 pub(super) struct FramebufferState<B: Backend> {
     pub(super) frame_images: Option<Vec<(B::Image, B::ImageView)>>,

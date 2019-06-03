@@ -1,9 +1,10 @@
 use log::debug;
-use gfx_hal::{Adapter, Backend, PhysicalDevice, MemoryType};
+use gfx_hal::{Adapter, Backend, Limits, PhysicalDevice, MemoryType};
 
 pub(super) struct AdapterState<B: Backend> {
     pub(super) adapter: Option<Adapter<B>>,
-    pub(super) memory_types: Vec<MemoryType>
+    pub(super) memory_types: Vec<MemoryType>,
+    pub(super) limits: Limits
 }
 
 impl<B: Backend> AdapterState<B> {
@@ -22,7 +23,8 @@ impl<B: Backend> AdapterState<B> {
 
         AdapterState {
             adapter: Some(adapter),
-            memory_types
+            memory_types,
+            limits
         }
     }
 }

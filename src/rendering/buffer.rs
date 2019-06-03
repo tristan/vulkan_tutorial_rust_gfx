@@ -1,14 +1,15 @@
 use std::cell::RefCell;
 use std::rc::Rc;
-use gfx_hal::{Backend, Device, IndexType, MemoryType};
+use gfx_hal::{Backend, CommandPool, Device, IndexType, MemoryType, Graphics};
 use gfx_hal::buffer::Usage;
 use gfx_hal::command;
 use gfx_hal::memory::Properties;
-use gfx_hal::pool;
 use gfx_hal::pso;
+use image;
 
 use super::device::DeviceState;
 use super::descriptors::DescriptorSet;
+use super::adapter::AdapterState;
 
 pub(super) struct BufferState<B: Backend> {
     memory: Option<B::Memory>,
@@ -98,6 +99,7 @@ pub(super) struct VertexBuffer<B: Backend>(BufferState<B>);
 impl <B: Backend> VertexBuffer<B> {
     pub(super) unsafe fn new<T>(
         device_ptr: Rc<RefCell<DeviceState<B>>>,
+        command_pool: &mut CommandPool<B, Graphics>,
         data_source: &[T],
         memory_types: &[MemoryType],
     ) -> Self where T: Copy {
@@ -123,6 +125,7 @@ impl <B: Backend> VertexBuffer<B> {
 
         copy_command_buffer(
             &device_ptr,
+            command_pool,
             staging_buffer.get_buffer(),
             vertex_buffer.get_buffer(),
             buffer_size
@@ -141,6 +144,7 @@ pub(super) struct IndexBuffer<B: Backend>(BufferState<B>, IndexType);
 impl <B: Backend> IndexBuffer<B> {
     pub(super) unsafe fn new<T>(
         device_ptr: Rc<RefCell<DeviceState<B>>>,
+        command_pool: &mut CommandPool<B, Graphics>,
         data_source: &[T],
         memory_types: &[MemoryType],
     ) -> Self where T: Copy {
@@ -166,6 +170,7 @@ impl <B: Backend> IndexBuffer<B> {
 
         copy_command_buffer(
             &device_ptr,
+            command_pool,
             staging_buffer.get_buffer(),
             index_buffer.get_buffer(),
             buffer_size
@@ -232,39 +237,61 @@ impl <B: Backend> UniformBuffer<B> {
 }
 
 
+pub(super) struct TextureBuffer<B: Backend>(BufferState<B>);
+
+impl <B: Backend> TextureBuffer<B> {
+    pub(super) unsafe fn new(
+        device_ptr: Rc<RefCell<DeviceState<B>>>,
+        adapter: &AdapterState<B>,
+        img: &image::ImageBuffer<image::Rgba<u8>, Vec<u8>>,
+        usage: Usage
+    ) -> (Self, u32, u32, u32, usize) {
+        let (width, height) = img.dimensions();
+
+        let row_alignment_mask = adapter.limits.optimal_buffer_copy_pitch_alignment as u32 - 1;
+        let stride = 4usize;
+
+        let row_pitch = (width * stride as u32 + row_alignment_mask) & !row_alignment_mask;
+        let upload_size = (height * row_pitch) as u64;
+
+        let mut buffer = BufferState::new::<u8>(
+            Rc::clone(&device_ptr),
+            upload_size,
+            usage,
+            Properties::CPU_VISIBLE | Properties::COHERENT,
+            &adapter.memory_types);
+        buffer.update_data(0, img);
+
+        (TextureBuffer(buffer), width, height, row_pitch, stride)
+    }
+
+    pub(super) fn get_buffer(&self) -> &B::Buffer {
+        self.0.get_buffer()
+    }
+}
+
+
 unsafe fn copy_command_buffer<B>(
     device_ptr: &Rc<RefCell<DeviceState<B>>>,
+    command_pool: &mut CommandPool<B, Graphics>,
     src_buffer: &B::Buffer,
     dst_buffer: &B::Buffer,
     size: u64
 ) where B: Backend {
-    let mut command_pool = device_ptr
-        .borrow()
-        .device
-        .create_command_pool_typed(
-            &device_ptr.borrow().queues,
-            pool::CommandPoolCreateFlags::TRANSIENT,
-        )
-        .expect("Can't create command pool");
 
-    {
-        let mut cmd_buffer: command::CommandBuffer<B, gfx_hal::Graphics, command::OneShot> = {
-            command_pool.acquire_command_buffer::<command::OneShot>()
-        };
-        cmd_buffer.begin();
-        cmd_buffer.copy_buffer(src_buffer, dst_buffer, &[command::BufferCopy {
-            src: 0,
-            dst: 0,
-            size: size
-        }]);
-        cmd_buffer.finish();
+    let mut cmd_buffer: command::CommandBuffer<B, gfx_hal::Graphics, command::OneShot> = {
+        command_pool.acquire_command_buffer::<command::OneShot>()
+    };
+    cmd_buffer.begin();
+    cmd_buffer.copy_buffer(src_buffer, dst_buffer, &[command::BufferCopy {
+        src: 0,
+        dst: 0,
+        size: size
+    }]);
+    cmd_buffer.finish();
 
-        let queue = &mut device_ptr.borrow_mut().queues.queues[0];
-        queue.submit_nosemaphores(std::iter::once(&cmd_buffer), None);
-        queue.wait_idle().unwrap();
-        // explicit cmd_buffer free on Drop
-    }
-
-    device_ptr.borrow().device.destroy_command_pool(
-        command_pool.into_raw());
+    let queue = &mut device_ptr.borrow_mut().queues.queues[0];
+    queue.submit_nosemaphores(std::iter::once(&cmd_buffer), None);
+    queue.wait_idle().unwrap();
+    // explicit cmd_buffer free on Drop
 }

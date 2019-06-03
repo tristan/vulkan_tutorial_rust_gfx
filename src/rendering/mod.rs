@@ -17,8 +17,11 @@ extern crate gfx_backend_metal as back;
 #[cfg(feature = "vulkan")]
 extern crate gfx_backend_vulkan as back;
 
+extern crate image;
+
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::io::Cursor;
 
 use log::debug;
 
@@ -30,12 +33,14 @@ use gfx_hal::{
     Instance,
     Swapchain,
 };
+use gfx_hal::pool::CommandPoolCreateFlags;
 #[cfg(feature="gl")]
 use gfx_hal::format::{AsFormat, Rgba8Srgb as ColorFormat};
 
 use crate::window::WindowState;
 use crate::consts::{APP_TITLE, APP_VERSION};
 
+mod constants;
 mod utils;
 mod primitives;
 mod adapter;
@@ -47,6 +52,7 @@ mod framebuffer;
 mod commandbuffer;
 mod buffer;
 mod descriptors;
+mod images;
 
 use adapter::AdapterState;
 use device::DeviceState;
@@ -57,6 +63,7 @@ use framebuffer::FramebufferState;
 use commandbuffer::CommandBufferState;
 use buffer::{VertexBuffer, IndexBuffer, UniformBuffer};
 use descriptors::DescriptorSetLayout;
+use images::Texture;
 
 pub struct BackendState<B: Backend> {
     surface: B::Surface,
@@ -119,6 +126,7 @@ pub struct RendererState<B: Backend> {
     framebuffer: FramebufferState<B>,
     vertex_buffer: VertexBuffer<B>,
     index_buffer: IndexBuffer<B>,
+    texture: Texture<B>,
     uniform_desc_pool: Option<B::DescriptorPool>,
     uniform_buffers: Vec<UniformBuffer<B>>,
     commandbuffer: CommandBufferState<B>,
@@ -162,16 +170,38 @@ impl<B: Backend> RendererState<B> {
             swapchain.as_mut().unwrap(),
         );
 
+        let mut staging_command_pool = device
+            .borrow()
+            .device
+            .create_command_pool_typed(
+                &device.borrow().queues,
+                CommandPoolCreateFlags::TRANSIENT,
+            )
+            .expect("Can't create command pool");
+
         let vertex_buffer = VertexBuffer::new::<primitives::Vertex>(
             Rc::clone(&device),
+            &mut staging_command_pool,
             &primitives::VERTICIES,
             &backend.adapter.memory_types,
         );
 
         let index_buffer = IndexBuffer::new::<u16>(
             Rc::clone(&device),
+            &mut staging_command_pool,
             &primitives::INDICIES,
             &backend.adapter.memory_types
+        );
+
+        let img = image::load(Cursor::new(&images::FOX_PNG_DATA[..]), image::PNG)
+            .unwrap()
+            .to_rgba();
+
+        let texture = Texture::new(
+            Rc::clone(&device),
+            &backend.adapter,
+            &mut staging_command_pool,
+            &img
         );
 
         // TODO: all this in one constructor
@@ -207,6 +237,9 @@ impl<B: Backend> RendererState<B> {
             )
             }).collect();
 
+        device.borrow().device.destroy_command_pool(
+            staging_command_pool.into_raw());
+
         // ------------------
 
         let commandbuffer = CommandBufferState::new(
@@ -235,6 +268,7 @@ impl<B: Backend> RendererState<B> {
             framebuffer,
             vertex_buffer,
             index_buffer,
+            texture,
             uniform_desc_pool,
             uniform_buffers,
             commandbuffer,
@@ -285,9 +319,21 @@ impl<B: Backend> RendererState<B> {
             )
         };
 
+        let mut staging_command_pool = unsafe {
+            self.device
+                .borrow()
+                .device
+                .create_command_pool_typed(
+                    &self.device.borrow().queues,
+                    CommandPoolCreateFlags::TRANSIENT,
+                )
+                .expect("Can't create command pool")
+        };
+
         self.vertex_buffer = unsafe {
             VertexBuffer::new::<primitives::Vertex>(
                 Rc::clone(&self.device),
+                &mut staging_command_pool,
                 &primitives::VERTICIES,
                 &self.backend.adapter.memory_types,
             )
@@ -297,12 +343,15 @@ impl<B: Backend> RendererState<B> {
         self.index_buffer = unsafe {
             IndexBuffer::new::<u16>(
                 Rc::clone(&self.device),
+                &mut staging_command_pool,
                 &primitives::INDICIES,
                 &self.backend.adapter.memory_types,
             )
         };
 
         unsafe {
+            self.device.borrow().device.destroy_command_pool(
+                staging_command_pool.into_raw());
             self.device
                 .borrow()
                 .device
