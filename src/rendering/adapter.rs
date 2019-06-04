@@ -20,6 +20,7 @@ impl<B: Backend> AdapterState<B> {
         let memory_types = adapter.physical_device.memory_properties().memory_types;
         let limits = adapter.physical_device.limits();
         debug!("{:?}", limits);
+        debug!("{:?}", adapter.physical_device.features());
 
         AdapterState {
             adapter: Some(adapter),

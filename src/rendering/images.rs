@@ -5,8 +5,10 @@ use gfx_hal::{Backend, Device, CommandPool, Graphics};
 use gfx_hal::buffer::Usage as BufferUsage;
 use gfx_hal::image::{Access, Layout, Usage as ImageUsage,
                      Kind, Size, SubresourceLayers, Tiling,
-                     ViewCapabilities, Offset, Extent};
-use gfx_hal::format::{AsFormat, Aspects, Rgba8Srgb};
+                     ViewCapabilities, Offset, Extent, ViewKind,
+                     SamplerInfo, Filter, WrapMode, Anisotropic,
+                     Lod};
+use gfx_hal::format::{AsFormat, Aspects, Rgba8Unorm, Swizzle};
 use gfx_hal::memory::{Barrier, Properties as MemoryProperties, Dependencies as MemoryDependencies};
 use gfx_hal::command;
 use gfx_hal::pso::PipelineStage;
@@ -24,7 +26,9 @@ pub(super) struct Texture<B: Backend> {
     device: Rc<RefCell<DeviceState<B>>>,
     //buffer: Option<TextureBuffer<B>>,
     memory: Option<B::Memory>,
-    image: Option<B::Image>
+    image: Option<B::Image>,
+    image_view: Option<B::ImageView>,
+    sampler: Option<B::Sampler>,
 }
 
 impl<B: Backend> Texture<B> {
@@ -42,14 +46,14 @@ impl<B: Backend> Texture<B> {
                 BufferUsage::TRANSFER_SRC
             )
         };
-        let (image, memory) = {
+        let (image, memory, image_view, sampler) = {
             let device = &device_ptr.borrow().device;
             let kind = Kind::D2(width as Size, height as Size, 1, 1);
             let mut image = device
                 .create_image(
                     kind, // kind
                     1,  // mip_levels
-                    Rgba8Srgb::SELF, // format
+                    Rgba8Unorm::SELF, // format
                     Tiling::Optimal, // tiling
                     ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED, // usage
                     ViewCapabilities::empty() // view_capabilities
@@ -72,6 +76,25 @@ impl<B: Backend> Texture<B> {
 
             let memory = device.allocate_memory(device_type, mem_req.size).unwrap();
             device.bind_image_memory(&memory, 0, &mut image).unwrap();
+
+            let image_view = device
+                .create_image_view(
+                    &image,
+                    ViewKind::D2,
+                    Rgba8Unorm::SELF,
+                    Swizzle::NO,
+                    COLOR_RANGE.clone()
+                )
+                .unwrap();
+
+            let mut sampler_info = SamplerInfo::new(Filter::Linear, WrapMode::Tile);
+            sampler_info.anisotropic = Anisotropic::On(16);
+            let lod0: Lod = 0.0f32.into();
+            sampler_info.lod_range = lod0..lod0;
+            let sampler = device
+                .create_sampler(sampler_info) // TILE = REPEAT
+                .expect("Can't create sampler");
+
 
             // copy buffer to texture
             {
@@ -134,14 +157,16 @@ impl<B: Backend> Texture<B> {
                 cmd_buffer.finish();
 
             }
-            (image, memory)
+            (image, memory, image_view, sampler)
         };
 
         Texture {
             device: device_ptr,
             //buffer: Some(buffer),
             memory: Some(memory),
-            image: Some(image)
+            image: Some(image),
+            image_view: Some(image_view),
+            sampler: Some(sampler)
         }
     }
 }
@@ -150,6 +175,8 @@ impl<B: Backend> Drop for Texture<B> {
     fn drop(&mut self) {
         let device = &self.device.borrow().device;
         unsafe {
+            device.destroy_sampler(self.sampler.take().unwrap());
+            device.destroy_image_view(self.image_view.take().unwrap());
             device.destroy_image(self.image.take().unwrap());
             device.free_memory(self.memory.take().unwrap());
         }
