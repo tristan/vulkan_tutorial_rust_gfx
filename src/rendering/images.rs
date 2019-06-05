@@ -11,12 +11,14 @@ use gfx_hal::image::{Access, Layout, Usage as ImageUsage,
 use gfx_hal::format::{AsFormat, Aspects, Rgba8Unorm, Swizzle};
 use gfx_hal::memory::{Barrier, Properties as MemoryProperties, Dependencies as MemoryDependencies};
 use gfx_hal::command;
+use gfx_hal::pso;
 use gfx_hal::pso::PipelineStage;
 
 use image;
 
 use super::adapter::AdapterState;
 use super::device::DeviceState;
+use super::descriptors::DescriptorSet;
 use super::buffer::TextureBuffer;
 use super::constants::COLOR_RANGE;
 
@@ -46,7 +48,8 @@ impl<B: Backend> Texture<B> {
                 BufferUsage::TRANSFER_SRC
             )
         };
-        let (image, memory, image_view, sampler) = {
+
+        let (image, memory) = {
             let device = &device_ptr.borrow().device;
             let kind = Kind::D2(width as Size, height as Size, 1, 1);
             let mut image = device
@@ -77,6 +80,77 @@ impl<B: Backend> Texture<B> {
             let memory = device.allocate_memory(device_type, mem_req.size).unwrap();
             device.bind_image_memory(&memory, 0, &mut image).unwrap();
 
+            (image, memory)
+        };
+
+        // copy buffer to texture
+        {
+            let mut cmd_buffer = command_pool.acquire_command_buffer::<command::OneShot>();
+            cmd_buffer.begin();
+
+            let image_barrier = Barrier::Image {
+                states: (Access::empty(), Layout::Undefined)
+                    ..(Access::TRANSFER_WRITE, Layout::TransferDstOptimal),
+                target: &image,
+                families: None,
+                range: COLOR_RANGE.clone(),
+            };
+
+            cmd_buffer.pipeline_barrier(
+                PipelineStage::TOP_OF_PIPE..PipelineStage::TRANSFER,
+                MemoryDependencies::empty(),
+                &[image_barrier]
+            );
+
+            cmd_buffer.copy_buffer_to_image(
+                (&buffer).get_buffer(),
+                &image,
+                Layout::TransferDstOptimal,
+                &[command::BufferImageCopy { // region
+                    buffer_offset: 0,
+                    buffer_width: row_pitch / (stride as u32), // buffer_row_length
+                    buffer_height: height, // buffer_image_height
+                    image_layers: SubresourceLayers { // image_subresource
+                        aspects: Aspects::COLOR,
+                        level: 0,
+                        layers: 0..1
+                    },
+                    image_offset: Offset { x: 0, y: 0, z: 0 },
+                    image_extent: Extent {
+                        width,
+                        height,
+                        depth: 1
+                    }
+
+                }]
+            );
+
+            // prepare image for shader access
+
+            let image_barrier = Barrier::Image {
+                states: (Access::TRANSFER_WRITE, Layout::TransferDstOptimal)
+                    ..(Access::SHADER_READ, Layout::ShaderReadOnlyOptimal),
+                target: &image,
+                families: None,
+                range: COLOR_RANGE.clone(),
+            };
+
+            cmd_buffer.pipeline_barrier(
+                PipelineStage::TRANSFER..PipelineStage::FRAGMENT_SHADER,
+                MemoryDependencies::empty(),
+                &[image_barrier],
+            );
+
+            cmd_buffer.finish();
+
+            let queue = &mut device_ptr.borrow_mut().queues.queues[0];
+            queue.submit_nosemaphores(std::iter::once(&cmd_buffer), None);
+            queue.wait_idle().unwrap();
+        }
+
+        let (image_view, sampler) = {
+            let device = &device_ptr.borrow().device;
+
             let image_view = device
                 .create_image_view(
                     &image,
@@ -95,69 +169,7 @@ impl<B: Backend> Texture<B> {
                 .create_sampler(sampler_info) // TILE = REPEAT
                 .expect("Can't create sampler");
 
-
-            // copy buffer to texture
-            {
-                let mut cmd_buffer = command_pool.acquire_command_buffer::<command::OneShot>();
-                cmd_buffer.begin();
-
-                let image_barrier = Barrier::Image {
-                    states: (Access::empty(), Layout::Undefined)
-                        ..(Access::TRANSFER_WRITE, Layout::TransferDstOptimal),
-                    target: &image,
-                    families: None,
-                    range: COLOR_RANGE.clone(),
-                };
-
-                cmd_buffer.pipeline_barrier(
-                    PipelineStage::TOP_OF_PIPE..PipelineStage::TRANSFER,
-                    MemoryDependencies::empty(),
-                    &[image_barrier]
-                );
-
-                cmd_buffer.copy_buffer_to_image(
-                    (&buffer).get_buffer(),
-                    &image,
-                    Layout::TransferDstOptimal,
-                    &[command::BufferImageCopy { // region
-                        buffer_offset: 0,
-                        buffer_width: 0, // buffer_row_length
-                        buffer_height: 0, // buffer_image_height
-                        image_layers: SubresourceLayers { // image_subresource
-                            aspects: Aspects::COLOR,
-                            level: 0,
-                            layers: 0..1
-                        },
-                        image_offset: Offset { x: 0, y: 0, z: 0 },
-                        image_extent: Extent {
-                            width,
-                            height,
-                            depth: 1
-                        }
-
-                    }]
-                );
-
-                // prepare image for shader access
-
-                let image_barrier = Barrier::Image {
-                    states: (Access::TRANSFER_WRITE, Layout::TransferDstOptimal)
-                        ..(Access::SHADER_READ, Layout::ShaderReadOnlyOptimal),
-                    target: &image,
-                    families: None,
-                    range: COLOR_RANGE.clone(),
-                };
-
-                cmd_buffer.pipeline_barrier(
-                    PipelineStage::TRANSFER..PipelineStage::FRAGMENT_SHADER,
-                    MemoryDependencies::empty(),
-                    &[image_barrier],
-                );
-
-                cmd_buffer.finish();
-
-            }
-            (image, memory, image_view, sampler)
+            (image_view, sampler)
         };
 
         Texture {
@@ -167,6 +179,30 @@ impl<B: Backend> Texture<B> {
             image: Some(image),
             image_view: Some(image_view),
             sampler: Some(sampler)
+        }
+    }
+
+    pub fn write_descriptor_set(
+        &self,
+        device: &mut B::Device,
+        desc: &DescriptorSet<B>,
+        binding: u32) {
+
+        let set = desc.set.as_ref().unwrap();
+        let write = vec![
+            pso::DescriptorSetWrite {
+                binding: binding,
+                array_offset: 0,
+                descriptors: Some(pso::Descriptor::CombinedImageSampler(
+                    self.image_view.as_ref().unwrap(),
+                    Layout::ShaderReadOnlyOptimal,
+                    self.sampler.as_ref().unwrap())),
+                set: set
+            }
+        ];
+
+        unsafe {
+            device.write_descriptor_sets(write);
         }
     }
 }

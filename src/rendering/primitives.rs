@@ -5,6 +5,7 @@ use gfx_hal::format as f;
 pub struct Vertex {
     pub pos: [f32; 2],
     pub color: [f32; 3],
+    pub tex_coord: [f32; 2]
 }
 
 impl Vertex {
@@ -15,7 +16,7 @@ impl Vertex {
         rate: pso::VertexInputRate::Vertex,
     };
 
-    pub const ATTRIBUTE_DESCRIPTIONS: [pso::AttributeDesc; 2] = [
+    pub const ATTRIBUTE_DESCRIPTIONS: [pso::AttributeDesc; 3] = [
         pso::AttributeDesc {
             location: 0,
             binding: 0,
@@ -31,24 +32,33 @@ impl Vertex {
                 format: f::Format::Rgb32Sfloat,
                 offset: std::mem::size_of::<[f32; 2]>() as _
             },
+        },
+        pso::AttributeDesc {
+            location: 2,
+            binding: 0,
+            element: pso::Element {
+                format: f::Format::Rg32Sfloat,
+                offset: std::mem::size_of::<[f32; 5]>() as _
+            },
         }
     ];
 }
 
 macro_rules! vert {
-    ( $x:expr, $y:expr, $r:expr, $g:expr, $b:expr ) => {
+    ( $x:expr, $y:expr, $r:expr, $g:expr, $b:expr, $tx:expr, $ty:expr ) => {
         Vertex {
             pos: [$x, $y],
-            color: [$r, $g, $b]
+            color: [$r, $g, $b],
+            tex_coord: [$tx, $ty]
         }
     };
 }
 
 pub(super) const VERTICIES: [Vertex; 4] = [
-    vert!(-0.5, -0.5, 1.0, 0.0, 0.0),
-    vert!( 0.5, -0.5, 0.0, 1.0, 0.0),
-    vert!( 0.5,  0.5, 0.0, 0.0, 1.0),
-    vert!(-0.5,  0.5, 1.0, 1.0, 1.0)
+    vert!(-0.5, -0.5, 1.0, 0.0, 0.0, 1.0, 0.0),
+    vert!( 0.5, -0.5, 0.0, 1.0, 0.0, 0.0, 0.0),
+    vert!( 0.5,  0.5, 0.0, 0.0, 1.0, 0.0, 1.0),
+    vert!(-0.5,  0.5, 1.0, 1.0, 1.0, 1.0, 1.0)
 ];
 
 pub(super) const INDICIES: [u16; 6] = [

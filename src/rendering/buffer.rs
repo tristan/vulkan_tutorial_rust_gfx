@@ -260,7 +260,25 @@ impl <B: Backend> TextureBuffer<B> {
             usage,
             Properties::CPU_VISIBLE | Properties::COHERENT,
             &adapter.memory_types);
-        buffer.update_data(0, img);
+
+        {
+            let device = &device_ptr.borrow().device;
+            let memory = buffer.memory.as_mut().unwrap();
+            let size = buffer.size;
+            let mut data_target = device
+                    .acquire_mapping_writer::<u8>(memory, 0..size)
+                    .unwrap();
+
+            for y in 0..height as usize {
+                let data_source_slice = &(**img)
+                    [y * (width as usize) * stride..(y + 1) * (width as usize) * stride];
+                let dest_base = y * row_pitch as usize;
+                data_target[dest_base..dest_base + data_source_slice.len()]
+                        .copy_from_slice(data_source_slice);
+            }
+
+            device.release_mapping_writer(data_target).unwrap();
+        }
 
         (TextureBuffer(buffer), width, height, row_pitch, stride)
     }

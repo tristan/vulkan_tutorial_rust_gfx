@@ -154,6 +154,13 @@ impl<B: Backend> RendererState<B> {
                     count: 1,
                     stage_flags: pso::ShaderStageFlags::VERTEX,
                     immutable_samplers: false,
+                },
+                pso::DescriptorSetLayoutBinding {
+                    binding: 1,
+                    ty: pso::DescriptorType::CombinedImageSampler,
+                    count: 1,
+                    stage_flags: pso::ShaderStageFlags::FRAGMENT,
+                    immutable_samplers: false
                 }
             ]);
 
@@ -216,6 +223,9 @@ impl<B: Backend> RendererState<B> {
                 &[pso::DescriptorRangeDesc {
                     ty: pso::DescriptorType::UniformBuffer,
                     count: num_buffers,
+                }, pso::DescriptorRangeDesc {
+                    ty: pso::DescriptorType::CombinedImageSampler,
+                    count: num_buffers
                 }],
                 pso::DescriptorPoolCreateFlags::empty(),
             )
@@ -225,17 +235,22 @@ impl<B: Backend> RendererState<B> {
             uniform_desc_pool.as_mut().unwrap(),
             num_buffers
         );
+        let mut uniform_buffers = Vec::with_capacity(num_buffers);
+        for desc in uniform_desc_sets {
+            texture.write_descriptor_set(
+                &mut device.borrow_mut().device,
+                &desc,
+                1
+            );
 
-        let uniform_buffers = uniform_desc_sets
-            .into_iter()
-            .map(|desc| {
-                UniformBuffer::new::<primitives::UniformBufferObject>(
-                    Rc::clone(&device),
-                    &backend.adapter.memory_types,
-                    desc,
-                    0
-            )
-            }).collect();
+            let ub = UniformBuffer::new::<primitives::UniformBufferObject>(
+                Rc::clone(&device),
+                &backend.adapter.memory_types,
+                desc,
+                0
+            );
+            uniform_buffers.push(ub);
+        }
 
         device.borrow().device.destroy_command_pool(
             staging_command_pool.into_raw());
@@ -306,6 +321,13 @@ impl<B: Backend> RendererState<B> {
                     count: 1,
                     stage_flags: pso::ShaderStageFlags::VERTEX,
                     immutable_samplers: false,
+                },
+                pso::DescriptorSetLayoutBinding {
+                    binding: 1,
+                    ty: pso::DescriptorType::CombinedImageSampler,
+                    count: 1,
+                    stage_flags: pso::ShaderStageFlags::FRAGMENT,
+                    immutable_samplers: false
                 }
             ])
         };
@@ -349,6 +371,19 @@ impl<B: Backend> RendererState<B> {
             )
         };
 
+        let img = image::load(Cursor::new(&images::FOX_PNG_DATA[..]), image::PNG)
+            .unwrap()
+            .to_rgba();
+
+        self.texture = unsafe {
+            Texture::new(
+                Rc::clone(&self.device),
+                &self.backend.adapter,
+                &mut staging_command_pool,
+                &img
+            )
+        };
+
         unsafe {
             self.device.borrow().device.destroy_command_pool(
                 staging_command_pool.into_raw());
@@ -366,6 +401,9 @@ impl<B: Backend> RendererState<B> {
                     &[pso::DescriptorRangeDesc {
                         ty: pso::DescriptorType::UniformBuffer,
                         count: num_buffers,
+                    }, pso::DescriptorRangeDesc {
+                        ty: pso::DescriptorType::CombinedImageSampler,
+                        count: num_buffers
                     }],
                     pso::DescriptorPoolCreateFlags::empty(),
                 )
@@ -379,6 +417,7 @@ impl<B: Backend> RendererState<B> {
             self.uniform_buffers = uniform_desc_sets
                 .into_iter()
                 .map(|desc| {
+                    self.texture.write_descriptor_set(&mut self.device.borrow_mut().device, &desc, 1);
                     UniformBuffer::new::<primitives::UniformBufferObject>(
                         Rc::clone(&self.device),
                         &self.backend.adapter.memory_types,
