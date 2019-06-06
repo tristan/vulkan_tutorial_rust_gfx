@@ -13,7 +13,7 @@ fn main() {
     let mut outfile = File::create(out_file_path).unwrap();
 
     let mut compiler = shaderc::Compiler::new().unwrap();
-    let mut options = shaderc::CompileOptions::new().unwrap();
+    let options = shaderc::CompileOptions::new().unwrap();
 
     for entry in std::fs::read_dir(&src_path).unwrap() {
         let path = entry.as_ref().unwrap().path();

@@ -20,6 +20,7 @@ winit = "0.19"
 gfx-hal = "0.2"
 nalgebra-glm = "0.4"
 image = "0.21"
+tobj = "0.1"
 
 [dependencies.gfx-backend-gl]
 version = "0.2"

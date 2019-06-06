@@ -22,8 +22,7 @@ use super::descriptors::DescriptorSet;
 use super::buffer::TextureBuffer;
 use super::constants::COLOR_RANGE;
 
-pub(super) const FOX_PNG_DATA: &'static [u8] = include_bytes!("../../textures/fox.png");
-
+pub(super) const CHALET_JPG_DATA: &'static [u8] = include_bytes!("../../textures/chalet.jpg");
 
 unsafe fn create_image<B: Backend>(
     device: &B::Device, adapter: &AdapterState<B>, width: u32, height: u32,
@@ -253,7 +252,6 @@ impl<B: Backend> DepthImage<B> {
         // find optimal depth format
         let format = device_ptr.borrow().optimal_depth_format().unwrap();
 
-        // createImage(swapChainExtent.width, swapChainExtent.height, depthFormat, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, depthImage, depthImageMemory);
         let (image, memory) = create_image(
             &device_ptr.borrow().device,
             &adapter,

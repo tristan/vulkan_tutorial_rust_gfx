@@ -142,16 +142,16 @@ impl <B: Backend> VertexBuffer<B> {
 pub(super) struct IndexBuffer<B: Backend>(BufferState<B>, IndexType);
 
 impl <B: Backend> IndexBuffer<B> {
-    pub(super) unsafe fn new<T>(
+    pub(super) unsafe fn new(
         device_ptr: Rc<RefCell<DeviceState<B>>>,
         command_pool: &mut CommandPool<B, Graphics>,
-        data_source: &[T],
+        data_source: &[u32],
         memory_types: &[MemoryType],
-    ) -> Self where T: Copy {
-        let stride = std::mem::size_of::<T>() as u64;
+    ) -> Self {
+        let stride = std::mem::size_of::<u32>() as u64;
         let buffer_size = data_source.len() as u64 * stride;
 
-        let mut staging_buffer = BufferState::new::<T>(
+        let mut staging_buffer = BufferState::new::<u32>(
             Rc::clone(&device_ptr),
             buffer_size,
             Usage::TRANSFER_SRC,
@@ -160,7 +160,7 @@ impl <B: Backend> IndexBuffer<B> {
         );
         staging_buffer.update_data(0, data_source);
 
-        let index_buffer = BufferState::new::<T>(
+        let index_buffer = BufferState::new::<u32>(
             Rc::clone(&device_ptr),
             buffer_size,
             Usage::TRANSFER_DST | Usage::INDEX,
@@ -176,7 +176,7 @@ impl <B: Backend> IndexBuffer<B> {
             buffer_size
         );
 
-        IndexBuffer(index_buffer, IndexType::U16)
+        IndexBuffer(index_buffer, IndexType::U32)
     }
 
     pub(super) fn get_buffer(&self) -> &B::Buffer {
@@ -254,9 +254,10 @@ impl <B: Backend> TextureBuffer<B> {
         let row_pitch = (width * stride as u32 + row_alignment_mask) & !row_alignment_mask;
         let upload_size = (height * row_pitch) as u64;
 
+
         let mut buffer = BufferState::new::<u8>(
             Rc::clone(&device_ptr),
-            upload_size,
+            upload_size as _,
             usage,
             Properties::CPU_VISIBLE | Properties::COHERENT,
             &adapter.memory_types);

@@ -202,21 +202,23 @@ impl<B: Backend> RendererState<B> {
             &depth_image
         );
 
+        let model = primitives::Model::load(std::path::Path::new("models/chalet.obj"));
+
         let vertex_buffer = VertexBuffer::new::<primitives::Vertex>(
             Rc::clone(&device),
             &mut staging_command_pool,
-            &primitives::VERTICIES,
+            &model.vertices,
             &backend.adapter.memory_types,
         );
 
-        let index_buffer = IndexBuffer::new::<u16>(
+        let index_buffer = IndexBuffer::new(
             Rc::clone(&device),
             &mut staging_command_pool,
-            &primitives::INDICIES,
+            &model.indicies,
             &backend.adapter.memory_types
         );
 
-        let img = image::load(Cursor::new(&images::FOX_PNG_DATA[..]), image::PNG)
+        let img = image::load(Cursor::new(&images::CHALET_JPG_DATA[..]), image::JPEG)
             .unwrap()
             .to_rgba();
 
@@ -281,7 +283,7 @@ impl<B: Backend> RendererState<B> {
             &pipeline,
             &vertex_buffer,
             &index_buffer,
-            primitives::INDICIES.len() as _,
+            model.indicies.len() as _,
             &uniform_buffers
         );
 
@@ -384,26 +386,28 @@ impl<B: Backend> RendererState<B> {
             )
         };
 
+        let model = primitives::Model::load(std::path::Path::new("models/chalet.obj"));
+
         self.vertex_buffer = unsafe {
             VertexBuffer::new::<primitives::Vertex>(
                 Rc::clone(&self.device),
                 &mut staging_command_pool,
-                &primitives::VERTICIES,
+                &model.vertices,
                 &self.backend.adapter.memory_types,
             )
         };
 
 
         self.index_buffer = unsafe {
-            IndexBuffer::new::<u16>(
+            IndexBuffer::new(
                 Rc::clone(&self.device),
                 &mut staging_command_pool,
-                &primitives::INDICIES,
+                &model.indicies,
                 &self.backend.adapter.memory_types,
             )
         };
 
-        let img = image::load(Cursor::new(&images::FOX_PNG_DATA[..]), image::PNG)
+        let img = image::load(Cursor::new(&images::CHALET_JPG_DATA[..]), image::JPEG)
             .unwrap()
             .to_rgba();
 
@@ -468,7 +472,7 @@ impl<B: Backend> RendererState<B> {
                 &self.pipeline,
                 &self.vertex_buffer,
                 &self.index_buffer,
-                primitives::INDICIES.len() as _,
+                model.indicies.len() as _,
                 &self.uniform_buffers
             )
         };
@@ -535,7 +539,7 @@ impl<B: Backend> RendererState<B> {
         };
 
         // update UBO
-        let time: f32 = utils::as_float_secs(&start_time.elapsed());
+        let time: f32 = utils::as_float_secs(&start_time.elapsed()) / 2.0;
         let swapchain_extent = &self.swapchain
             .as_ref()
             .unwrap()
