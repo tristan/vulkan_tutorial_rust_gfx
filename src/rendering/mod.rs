@@ -63,7 +63,7 @@ use framebuffer::FramebufferState;
 use commandbuffer::CommandBufferState;
 use buffer::{VertexBuffer, IndexBuffer, UniformBuffer};
 use descriptors::DescriptorSetLayout;
-use images::Texture;
+use images::{DepthImage, Texture};
 
 pub struct BackendState<B: Backend> {
     surface: B::Surface,
@@ -126,6 +126,7 @@ pub struct RendererState<B: Backend> {
     framebuffer: FramebufferState<B>,
     vertex_buffer: VertexBuffer<B>,
     index_buffer: IndexBuffer<B>,
+    depth_image: DepthImage<B>,
     texture: Texture<B>,
     uniform_desc_pool: Option<B::DescriptorPool>,
     uniform_buffers: Vec<UniformBuffer<B>>,
@@ -143,7 +144,10 @@ impl<B: Backend> RendererState<B> {
 
         let mut swapchain = Some(SwapchainState::new(&mut backend, Rc::clone(&device)));
 
-        let render_pass = RenderPassState::new(swapchain.as_ref().unwrap(), Rc::clone(&device));
+        let render_pass = RenderPassState::new(
+            Rc::clone(&device),
+            swapchain.as_ref().unwrap(),
+        );
 
         let desc_set_layout = DescriptorSetLayout::new(
             Rc::clone(&device),
@@ -171,12 +175,6 @@ impl<B: Backend> RendererState<B> {
             swapchain.as_ref().unwrap()
         );
 
-        let mut framebuffer = FramebufferState::new(
-            Rc::clone(&device),
-            &render_pass,
-            swapchain.as_mut().unwrap(),
-        );
-
         let mut staging_command_pool = device
             .borrow()
             .device
@@ -185,6 +183,24 @@ impl<B: Backend> RendererState<B> {
                 CommandPoolCreateFlags::TRANSIENT,
             )
             .expect("Can't create command pool");
+
+        let depth_image = {
+            let width = swapchain.as_ref().unwrap().extent.width;
+            let height = swapchain.as_ref().unwrap().extent.height;
+            DepthImage::new(
+                Rc::clone(&device),
+                &backend.adapter,
+                width, height,
+                &mut staging_command_pool
+            )
+        };
+
+        let mut framebuffer = FramebufferState::new(
+            Rc::clone(&device),
+            &render_pass,
+            swapchain.as_mut().unwrap(),
+            &depth_image
+        );
 
         let vertex_buffer = VertexBuffer::new::<primitives::Vertex>(
             Rc::clone(&device),
@@ -283,6 +299,7 @@ impl<B: Backend> RendererState<B> {
             framebuffer,
             vertex_buffer,
             index_buffer,
+            depth_image,
             texture,
             uniform_desc_pool,
             uniform_buffers,
@@ -300,7 +317,32 @@ impl<B: Backend> RendererState<B> {
             Some(unsafe { SwapchainState::new(&mut self.backend, Rc::clone(&self.device)) });
 
         self.render_pass = unsafe {
-            RenderPassState::new(self.swapchain.as_ref().unwrap(), Rc::clone(&self.device))
+            RenderPassState::new(
+                Rc::clone(&self.device),
+                self.swapchain.as_ref().unwrap()
+            )
+        };
+
+        let mut staging_command_pool = unsafe {
+            self.device
+                .borrow()
+                .device
+                .create_command_pool_typed(
+                    &self.device.borrow().queues,
+                    CommandPoolCreateFlags::TRANSIENT,
+                )
+                .expect("Can't create command pool")
+        };
+
+        self.depth_image = unsafe {
+            let width = self.swapchain.as_ref().unwrap().extent.width;
+            let height = self.swapchain.as_ref().unwrap().extent.height;
+            DepthImage::new(
+                Rc::clone(&self.device),
+                &self.backend.adapter,
+                width, height,
+                &mut staging_command_pool
+            )
         };
 
         self.framebuffer = unsafe {
@@ -308,6 +350,7 @@ impl<B: Backend> RendererState<B> {
                 Rc::clone(&self.device),
                 &self.render_pass,
                 self.swapchain.as_mut().unwrap(),
+                &self.depth_image
             )
         };
 
@@ -339,17 +382,6 @@ impl<B: Backend> RendererState<B> {
                 self.render_pass.render_pass.as_ref().unwrap(),
                 self.swapchain.as_mut().unwrap(),
             )
-        };
-
-        let mut staging_command_pool = unsafe {
-            self.device
-                .borrow()
-                .device
-                .create_command_pool_typed(
-                    &self.device.borrow().queues,
-                    CommandPoolCreateFlags::TRANSIENT,
-                )
-                .expect("Can't create command pool")
         };
 
         self.vertex_buffer = unsafe {

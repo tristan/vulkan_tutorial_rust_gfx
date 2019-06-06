@@ -7,8 +7,8 @@ use gfx_hal::image::{Access, Layout, Usage as ImageUsage,
                      Kind, Size, SubresourceLayers, Tiling,
                      ViewCapabilities, Offset, Extent, ViewKind,
                      SamplerInfo, Filter, WrapMode, Anisotropic,
-                     Lod};
-use gfx_hal::format::{AsFormat, Aspects, Rgba8Unorm, Swizzle};
+                     Lod, SubresourceRange};
+use gfx_hal::format::{AsFormat, Format, Aspects, Rgba8Unorm, Swizzle};
 use gfx_hal::memory::{Barrier, Properties as MemoryProperties, Dependencies as MemoryDependencies};
 use gfx_hal::command;
 use gfx_hal::pso;
@@ -24,9 +24,47 @@ use super::constants::COLOR_RANGE;
 
 pub(super) const FOX_PNG_DATA: &'static [u8] = include_bytes!("../../textures/fox.png");
 
+
+unsafe fn create_image<B: Backend>(
+    device: &B::Device, adapter: &AdapterState<B>, width: u32, height: u32,
+    format: Format, tiling: Tiling, usage: ImageUsage,
+    properties: MemoryProperties
+) -> (B::Image, B::Memory) {
+    let kind = Kind::D2(width as Size, height as Size, 1, 1);
+    let mut image = device
+        .create_image(
+            kind, // kind
+            1,  // mip_levels
+            format, // format
+            tiling, // tiling
+            usage, // usage
+            ViewCapabilities::empty() // view_capabilities
+        )
+        .unwrap();
+
+    let mem_req = device.get_image_requirements(&image);
+
+    let device_type = adapter
+        .memory_types
+        .iter()
+        .enumerate()
+        .position(|(id, memory_type)| {
+            mem_req.type_mask & (1 << id) != 0
+                && memory_type.properties.contains(
+                    properties)
+        })
+        .unwrap()
+        .into();
+
+    let memory = device.allocate_memory(device_type, mem_req.size).unwrap();
+    device.bind_image_memory(&memory, 0, &mut image).unwrap();
+
+    (image, memory)
+}
+
+
 pub(super) struct Texture<B: Backend> {
     device: Rc<RefCell<DeviceState<B>>>,
-    //buffer: Option<TextureBuffer<B>>,
     memory: Option<B::Memory>,
     image: Option<B::Image>,
     image_view: Option<B::ImageView>,
@@ -49,39 +87,15 @@ impl<B: Backend> Texture<B> {
             )
         };
 
-        let (image, memory) = {
-            let device = &device_ptr.borrow().device;
-            let kind = Kind::D2(width as Size, height as Size, 1, 1);
-            let mut image = device
-                .create_image(
-                    kind, // kind
-                    1,  // mip_levels
-                    Rgba8Unorm::SELF, // format
-                    Tiling::Optimal, // tiling
-                    ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED, // usage
-                    ViewCapabilities::empty() // view_capabilities
-                )
-                .unwrap();
-
-            let mem_req = device.get_image_requirements(&image);
-
-            let device_type = adapter
-                .memory_types
-                .iter()
-                .enumerate()
-                .position(|(id, memory_type)| {
-                    mem_req.type_mask & (1 << id) != 0
-                        && memory_type.properties.contains(
-                            MemoryProperties::DEVICE_LOCAL)
-                })
-                .unwrap()
-                .into();
-
-            let memory = device.allocate_memory(device_type, mem_req.size).unwrap();
-            device.bind_image_memory(&memory, 0, &mut image).unwrap();
-
-            (image, memory)
-        };
+        let (image, memory) = create_image(
+            &device_ptr.borrow().device,
+            &adapter,
+            width, height,
+            Rgba8Unorm::SELF,
+            Tiling::Optimal,
+            ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
+            MemoryProperties::DEVICE_LOCAL
+        );
 
         // copy buffer to texture
         {
@@ -212,6 +226,108 @@ impl<B: Backend> Drop for Texture<B> {
         let device = &self.device.borrow().device;
         unsafe {
             device.destroy_sampler(self.sampler.take().unwrap());
+            device.destroy_image_view(self.image_view.take().unwrap());
+            device.destroy_image(self.image.take().unwrap());
+            device.free_memory(self.memory.take().unwrap());
+        }
+    }
+}
+
+
+pub(super) struct DepthImage<B: Backend> {
+    device: Rc<RefCell<DeviceState<B>>>,
+    memory: Option<B::Memory>,
+    image: Option<B::Image>,
+    pub(super) image_view: Option<B::ImageView>
+}
+
+impl<B: Backend> DepthImage<B> {
+    pub(super) unsafe fn new(
+        device_ptr: Rc<RefCell<DeviceState<B>>>,
+        adapter: &AdapterState<B>,
+        width: u32,
+        height: u32,
+        command_pool: &mut CommandPool<B, Graphics>,
+    ) -> Self {
+
+        // find optimal depth format
+        let format = device_ptr.borrow().optimal_depth_format().unwrap();
+
+        // createImage(swapChainExtent.width, swapChainExtent.height, depthFormat, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, depthImage, depthImageMemory);
+        let (image, memory) = create_image(
+            &device_ptr.borrow().device,
+            &adapter,
+            width, height,
+            format,
+            Tiling::Optimal,
+            ImageUsage::DEPTH_STENCIL_ATTACHMENT,
+            MemoryProperties::DEVICE_LOCAL
+        );
+
+        let image_view = {
+            let device = &device_ptr.borrow().device;
+            let image_view = device
+                .create_image_view(
+                    &image,
+                    ViewKind::D2,
+                    format,
+                    Swizzle::NO,
+                    SubresourceRange {
+                        aspects: Aspects::DEPTH,
+                        levels: 0..1,
+                        layers: 0..1,
+                    }
+                )
+                .unwrap();
+            image_view
+        };
+
+        {
+            let mut cmd_buffer = command_pool.acquire_command_buffer::<command::OneShot>();
+            cmd_buffer.begin();
+
+            let aspects = {
+                if format.is_stencil() {
+                    Aspects::DEPTH | Aspects::STENCIL
+                } else {
+                    Aspects::DEPTH
+                }
+            };
+            let image_barrier = Barrier::Image {
+                states: (Access::empty(), Layout::Undefined)
+                    ..(Access::DEPTH_STENCIL_ATTACHMENT_READ | Access::DEPTH_STENCIL_ATTACHMENT_WRITE, Layout::DepthStencilAttachmentOptimal),
+                target: &image,
+                families: None,
+                range: SubresourceRange {
+                    aspects: aspects,
+                    levels: 0..1,
+                    layers: 0..1,
+                },
+            };
+
+            cmd_buffer.pipeline_barrier(
+                PipelineStage::TOP_OF_PIPE..PipelineStage::EARLY_FRAGMENT_TESTS,
+                MemoryDependencies::empty(),
+                &[image_barrier]
+            );
+
+            cmd_buffer.finish();
+        }
+
+        DepthImage {
+            device: device_ptr,
+            memory: Some(memory),
+            image: Some(image),
+            image_view: Some(image_view)
+        }
+
+    }
+}
+
+impl<B: Backend> Drop for DepthImage<B> {
+    fn drop(&mut self) {
+        let device = &self.device.borrow().device;
+        unsafe {
             device.destroy_image_view(self.image_view.take().unwrap());
             device.destroy_image(self.image.take().unwrap());
             device.free_memory(self.memory.take().unwrap());

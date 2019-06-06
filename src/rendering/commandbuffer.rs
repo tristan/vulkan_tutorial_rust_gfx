@@ -89,6 +89,8 @@ impl<B: Backend> CommandBufferState<B> {
                         command::ClearColor::Float([
                             0.0, 0.0, 0.0, 1.0,
                         ])
+                    ), command::ClearValue::DepthStencil(
+                        command::ClearDepthStencil(1.0, 0)
                     )]
                 );
 

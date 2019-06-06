@@ -111,6 +111,15 @@ impl<B: Backend> PipelineState<B> {
                     &primitives::Vertex::ATTRIBUTE_DESCRIPTIONS
                 );
 
+                pipeline_desc.depth_stencil = pso::DepthStencilDesc {
+                    depth: pso::DepthTest::On {
+                        fun: pso::Comparison::Less,
+                        write: true
+                    },
+                    depth_bounds: false,
+                    stencil: pso::StencilTest::Off
+                };
+
                 device.create_graphics_pipeline(&pipeline_desc, None)
             };
 

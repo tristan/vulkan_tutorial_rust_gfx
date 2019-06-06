@@ -14,9 +14,12 @@ pub(super) struct RenderPassState<B: Backend> {
 }
 
 impl<B: Backend> RenderPassState<B> {
-    pub(super) unsafe fn new(swapchain: &SwapchainState<B>, device: Rc<RefCell<DeviceState<B>>>) -> Self {
+    pub(super) unsafe fn new(
+        device: Rc<RefCell<DeviceState<B>>>,
+        swapchain: &SwapchainState<B>
+    ) -> Self {
         let render_pass = {
-            let attachment = pass::Attachment {
+            let color_attachment = pass::Attachment {
                 format: Some(swapchain.format.clone()),
                 samples: 1,
                 ops: pass::AttachmentOps::new(
@@ -27,9 +30,20 @@ impl<B: Backend> RenderPassState<B> {
                 layouts: Layout::Undefined..Layout::Present
             };
 
+            let depth_attachment = pass::Attachment {
+                format: device.borrow().optimal_depth_format(),
+                samples: 1,
+                ops: pass::AttachmentOps::new(
+                    pass::AttachmentLoadOp::Clear,
+                    pass::AttachmentStoreOp::DontCare,
+                ),
+                stencil_ops: pass::AttachmentOps::DONT_CARE,
+                layouts: Layout::Undefined..Layout::DepthStencilAttachmentOptimal
+            };
+
             let subpass = pass::SubpassDesc {
                 colors: &[(0, Layout::ColorAttachmentOptimal)],
-                depth_stencil: None,
+                depth_stencil: Some(&(1, Layout::DepthStencilAttachmentOptimal)),
                 inputs: &[],
                 resolves: &[],
                 preserves: &[],
@@ -48,7 +62,7 @@ impl<B: Backend> RenderPassState<B> {
             device
                 .borrow()
                 .device
-                .create_render_pass(&[attachment],
+                .create_render_pass(&[color_attachment, depth_attachment],
                                     &[subpass],
                                     &[dependency])
                 .ok()

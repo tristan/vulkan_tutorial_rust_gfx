@@ -6,7 +6,7 @@ use shaderc;
 
 fn main() {
 
-    let src_path = Path::new("glsl");
+    let src_path = Path::new("shaders");
     let out_dir_str = env::var("OUT_DIR").unwrap();
     let out_dir = Path::new(&out_dir_str);
     let out_file_path = out_dir.join(&["compiled_shaders.rs"].join(""));

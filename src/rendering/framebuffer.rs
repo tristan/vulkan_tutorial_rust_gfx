@@ -3,10 +3,11 @@ use std::rc::Rc;
 use gfx_hal::{Backend, Device};
 use gfx_hal::format;
 use gfx_hal::image::{Extent, ViewKind};
+
 use super::device::DeviceState;
 use super::render_pass::RenderPassState;
 use super::swapchain::SwapchainState;
-
+use super::images::DepthImage;
 use super::constants::COLOR_RANGE;
 
 pub(super) struct FramebufferState<B: Backend> {
@@ -20,6 +21,7 @@ impl<B: Backend> FramebufferState<B> {
         device: Rc<RefCell<DeviceState<B>>>,
         render_pass: &RenderPassState<B>,
         swapchain: &mut SwapchainState<B>,
+        depth_image: &DepthImage<B>
     ) -> Self {
         let (frame_images, framebuffers) = {
             let extent = Extent {
@@ -45,15 +47,22 @@ impl<B: Backend> FramebufferState<B> {
                 })
                 .collect::<Vec<_>>();
 
+            let depth_image_view = depth_image.image_view.as_ref().unwrap();
+
             let fbos = pairs
                 .iter()
-                .map(|&(_, ref rtv)| {
+                .zip(std::iter::repeat(depth_image_view))
+                .map(|(&(_, ref rtv), ref dv)| {
+                    let attachments = vec![
+                        rtv,
+                        dv
+                    ];
                     device
                         .borrow()
                         .device
                         .create_framebuffer(
                             render_pass.render_pass.as_ref().unwrap(),
-                            Some(rtv),
+                            attachments,
                             extent,
                         )
                         .unwrap()

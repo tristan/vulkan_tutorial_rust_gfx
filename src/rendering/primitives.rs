@@ -3,7 +3,7 @@ use gfx_hal::format as f;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Vertex {
-    pub pos: [f32; 2],
+    pub pos: [f32; 3],
     pub color: [f32; 3],
     pub tex_coord: [f32; 2]
 }
@@ -21,7 +21,7 @@ impl Vertex {
             location: 0,
             binding: 0,
             element: pso::Element {
-                format: f::Format::Rg32Sfloat,
+                format: f::Format::Rgb32Sfloat,
                 offset: 0,
             },
         },
@@ -45,24 +45,30 @@ impl Vertex {
 }
 
 macro_rules! vert {
-    ( $x:expr, $y:expr, $r:expr, $g:expr, $b:expr, $tx:expr, $ty:expr ) => {
+    ( $x:expr, $y:expr, $z: expr, $r:expr, $g:expr, $b:expr, $tx:expr, $ty:expr ) => {
         Vertex {
-            pos: [$x, $y],
+            pos: [$x, $y, $z],
             color: [$r, $g, $b],
             tex_coord: [$tx, $ty]
         }
     };
 }
 
-pub(super) const VERTICIES: [Vertex; 4] = [
-    vert!(-0.5, -0.5, 1.0, 0.0, 0.0, 1.0, 0.0),
-    vert!( 0.5, -0.5, 0.0, 1.0, 0.0, 0.0, 0.0),
-    vert!( 0.5,  0.5, 0.0, 0.0, 1.0, 0.0, 1.0),
-    vert!(-0.5,  0.5, 1.0, 1.0, 1.0, 1.0, 1.0)
+pub(super) const VERTICIES: [Vertex; 8] = [
+    vert!(-0.5, -0.5,  0.0, 1.0, 0.0, 0.0, 1.0, 0.0),
+    vert!( 0.5, -0.5,  0.0, 0.0, 1.0, 0.0, 0.0, 0.0),
+    vert!( 0.5,  0.5,  0.0, 0.0, 0.0, 1.0, 0.0, 1.0),
+    vert!(-0.5,  0.5,  0.0, 1.0, 1.0, 1.0, 1.0, 1.0),
+
+    vert!(-0.5, -0.5, -0.5, 1.0, 0.0, 0.0, 1.0, 0.0),
+    vert!( 0.5, -0.5, -0.5, 0.0, 1.0, 0.0, 0.0, 0.0),
+    vert!( 0.5,  0.5, -0.5, 0.0, 0.0, 1.0, 0.0, 1.0),
+    vert!(-0.5,  0.5, -0.5, 1.0, 1.0, 1.0, 1.0, 1.0)
 ];
 
-pub(super) const INDICIES: [u16; 6] = [
-    0, 1, 2, 2, 3, 0
+pub(super) const INDICIES: [u16; 12] = [
+    0, 1, 2, 2, 3, 0,
+    4, 5, 6, 6, 7, 4
 ];
 
 //#[derive(Debug, Clone, Copy)]
