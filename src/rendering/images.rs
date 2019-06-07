@@ -8,7 +8,8 @@ use gfx_hal::image::{Access, Layout, Usage as ImageUsage,
                      ViewCapabilities, Offset, Extent, ViewKind,
                      SamplerInfo, Filter, WrapMode, Anisotropic,
                      Lod, SubresourceRange};
-use gfx_hal::format::{AsFormat, Format, Aspects, Rgba8Unorm, Swizzle};
+use gfx_hal::format::{AsFormat, Format, Aspects, Rgba8Unorm, Swizzle, ImageFeature
+};
 use gfx_hal::memory::{Barrier, Properties as MemoryProperties, Dependencies as MemoryDependencies};
 use gfx_hal::command;
 use gfx_hal::pso;
@@ -20,20 +21,19 @@ use super::adapter::AdapterState;
 use super::device::DeviceState;
 use super::descriptors::DescriptorSet;
 use super::buffer::TextureBuffer;
-use super::constants::COLOR_RANGE;
 
 pub(super) const CHALET_JPG_DATA: &'static [u8] = include_bytes!("../../textures/chalet.jpg");
 
 unsafe fn create_image<B: Backend>(
     device: &B::Device, adapter: &AdapterState<B>, width: u32, height: u32,
     format: Format, tiling: Tiling, usage: ImageUsage,
-    properties: MemoryProperties
+    properties: MemoryProperties, mip_levels: u8
 ) -> (B::Image, B::Memory) {
     let kind = Kind::D2(width as Size, height as Size, 1, 1);
     let mut image = device
         .create_image(
             kind, // kind
-            1,  // mip_levels
+            mip_levels,  // mip_levels
             format, // format
             tiling, // tiling
             usage, // usage
@@ -77,6 +77,12 @@ impl<B: Backend> Texture<B> {
         command_pool: &mut CommandPool<B, Graphics>,
         img: &image::ImageBuffer<image::Rgba<u8>, Vec<u8>>
     ) -> Self {
+
+        let props = device_ptr.borrow().format_properties(Some(Rgba8Unorm::SELF));
+        if props.optimal_tiling & ImageFeature::SAMPLED_LINEAR != ImageFeature::SAMPLED_LINEAR {
+            panic!("texture image format does not support linear blitting!");
+        }
+
         let (buffer, width, height, row_pitch, stride) = {
             TextureBuffer::new(
                 Rc::clone(&device_ptr),
@@ -86,15 +92,26 @@ impl<B: Backend> Texture<B> {
             )
         };
 
+        let mip_levels = (std::cmp::max(width, height) as f64)
+            .log2()
+            .floor() as u8 + 1;
+
         let (image, memory) = create_image(
             &device_ptr.borrow().device,
             &adapter,
             width, height,
             Rgba8Unorm::SELF,
             Tiling::Optimal,
-            ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
-            MemoryProperties::DEVICE_LOCAL
+            ImageUsage::TRANSFER_SRC | ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
+            MemoryProperties::DEVICE_LOCAL,
+            mip_levels
         );
+
+        let subresourcerange = SubresourceRange {
+            aspects: Aspects::COLOR,
+            levels: 0..mip_levels,
+            layers: 0..1,
+        };
 
         // copy buffer to texture
         {
@@ -106,7 +123,7 @@ impl<B: Backend> Texture<B> {
                     ..(Access::TRANSFER_WRITE, Layout::TransferDstOptimal),
                 target: &image,
                 families: None,
-                range: COLOR_RANGE.clone(),
+                range: subresourcerange.clone(),
             };
 
             cmd_buffer.pipeline_barrier(
@@ -138,14 +155,100 @@ impl<B: Backend> Texture<B> {
                 }]
             );
 
-            // prepare image for shader access
+            let mut src_mip_width = width;
+            let mut src_mip_height = height;
+
+            for i in 1..mip_levels {
+                let image_barrier = Barrier::Image {
+                    states: (Access::TRANSFER_WRITE, Layout::TransferDstOptimal)
+                        ..(Access::TRANSFER_READ, Layout::TransferSrcOptimal),
+                    target: &image,
+                    families: None,
+                    range: SubresourceRange {
+                        aspects: Aspects::COLOR,
+                        levels: (i - 1)..i,
+                        layers: 0..1,
+                    }
+                };
+
+                cmd_buffer.pipeline_barrier(
+                    PipelineStage::TRANSFER..PipelineStage::TRANSFER,
+                    MemoryDependencies::empty(),
+                    &[image_barrier],
+                );
+
+
+                let dst_mip_width = {
+                    if src_mip_width > 1 {
+                        src_mip_width / 2
+                    } else {
+                        1
+                    }
+                };
+                let dst_mip_height = {
+                    if src_mip_height > 1 {
+                        src_mip_height / 2
+                    } else {
+                        1
+                    }
+                };
+
+                cmd_buffer.blit_image(
+                    &image, // image
+                    Layout::TransferSrcOptimal, // src_layout
+                    &image, // dst
+                    Layout::TransferDstOptimal, // dst_layout
+                    Filter::Linear, // filter,
+                    Some(command::ImageBlit {
+                        src_subresource: SubresourceLayers {
+                            aspects: Aspects::COLOR,
+                            level: i - 1,
+                            layers: 0..1
+                        },
+                        src_bounds: Offset { x: 0, y: 0, z: 0 }..
+                            Offset { x: src_mip_width as _, y: src_mip_height as _, z: 1 },
+                        dst_subresource: SubresourceLayers {
+                            aspects: Aspects::COLOR,
+                            level: i,
+                            layers: 0..1
+                        },
+                        dst_bounds: Offset { x: 0, y: 0, z: 0 }..
+                            Offset { x: dst_mip_width as _, y: dst_mip_height as _, z: 1 }
+                    })
+                );
+
+                let image_barrier = Barrier::Image {
+                    states: (Access::TRANSFER_READ, Layout::TransferSrcOptimal)
+                        ..(Access::SHADER_READ, Layout::ShaderReadOnlyOptimal),
+                    target: &image,
+                    families: None,
+                    range: SubresourceRange {
+                        aspects: Aspects::COLOR,
+                        levels: (i - 1)..i,
+                        layers: 0..1,
+                    }
+                };
+
+                cmd_buffer.pipeline_barrier(
+                    PipelineStage::TRANSFER..PipelineStage::FRAGMENT_SHADER,
+                    MemoryDependencies::empty(),
+                    &[image_barrier],
+                );
+
+                src_mip_width = dst_mip_width;
+                src_mip_height = dst_mip_height;
+            }
 
             let image_barrier = Barrier::Image {
                 states: (Access::TRANSFER_WRITE, Layout::TransferDstOptimal)
                     ..(Access::SHADER_READ, Layout::ShaderReadOnlyOptimal),
                 target: &image,
                 families: None,
-                range: COLOR_RANGE.clone(),
+                range: SubresourceRange {
+                    aspects: Aspects::COLOR,
+                    levels: (mip_levels - 1)..mip_levels,
+                    layers: 0..1,
+                }
             };
 
             cmd_buffer.pipeline_barrier(
@@ -170,14 +273,15 @@ impl<B: Backend> Texture<B> {
                     ViewKind::D2,
                     Rgba8Unorm::SELF,
                     Swizzle::NO,
-                    COLOR_RANGE.clone()
+                    subresourcerange
                 )
                 .unwrap();
 
             let mut sampler_info = SamplerInfo::new(Filter::Linear, WrapMode::Tile);
             sampler_info.anisotropic = Anisotropic::On(16);
             let lod0: Lod = 0.0f32.into();
-            sampler_info.lod_range = lod0..lod0;
+            let lodn: Lod = (mip_levels as f32).into();
+            sampler_info.lod_range = lod0..lodn;
             let sampler = device
                 .create_sampler(sampler_info) // TILE = REPEAT
                 .expect("Can't create sampler");
@@ -259,7 +363,8 @@ impl<B: Backend> DepthImage<B> {
             format,
             Tiling::Optimal,
             ImageUsage::DEPTH_STENCIL_ATTACHMENT,
-            MemoryProperties::DEVICE_LOCAL
+            MemoryProperties::DEVICE_LOCAL,
+            1
         );
 
         let image_view = {
