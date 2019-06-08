@@ -63,7 +63,7 @@ use framebuffer::FramebufferState;
 use commandbuffer::CommandBufferState;
 use buffer::{VertexBuffer, IndexBuffer, UniformBuffer};
 use descriptors::DescriptorSetLayout;
-use images::{DepthImage, Texture};
+use images::{DepthImage, Texture, ColorImage};
 
 pub struct BackendState<B: Backend> {
     surface: B::Surface,
@@ -127,6 +127,7 @@ pub struct RendererState<B: Backend> {
     vertex_buffer: VertexBuffer<B>,
     index_buffer: IndexBuffer<B>,
     depth_image: DepthImage<B>,
+    color_image: ColorImage<B>,
     texture: Texture<B>,
     uniform_desc_pool: Option<B::DescriptorPool>,
     uniform_buffers: Vec<UniformBuffer<B>>,
@@ -146,6 +147,7 @@ impl<B: Backend> RendererState<B> {
 
         let render_pass = RenderPassState::new(
             Rc::clone(&device),
+            &backend.adapter,
             swapchain.as_ref().unwrap(),
         );
 
@@ -170,6 +172,7 @@ impl<B: Backend> RendererState<B> {
 
         let pipeline = PipelineState::new(
             Rc::clone(&device),
+            &backend.adapter,
             vec![desc_set_layout.get_layout()],
             render_pass.render_pass.as_ref().unwrap(),
             swapchain.as_ref().unwrap()
@@ -183,6 +186,14 @@ impl<B: Backend> RendererState<B> {
                 CommandPoolCreateFlags::TRANSIENT,
             )
             .expect("Can't create command pool");
+
+        let color_image = ColorImage::new(
+            Rc::clone(&device),
+            &backend.adapter,
+            swapchain.as_ref().unwrap(),
+            &mut staging_command_pool
+        );
+
 
         let depth_image = {
             let width = swapchain.as_ref().unwrap().extent.width;
@@ -199,6 +210,7 @@ impl<B: Backend> RendererState<B> {
             Rc::clone(&device),
             &render_pass,
             swapchain.as_mut().unwrap(),
+            &color_image,
             &depth_image
         );
 
@@ -302,6 +314,7 @@ impl<B: Backend> RendererState<B> {
             vertex_buffer,
             index_buffer,
             depth_image,
+            color_image,
             texture,
             uniform_desc_pool,
             uniform_buffers,
@@ -321,6 +334,7 @@ impl<B: Backend> RendererState<B> {
         self.render_pass = unsafe {
             RenderPassState::new(
                 Rc::clone(&self.device),
+                &self.backend.adapter,
                 self.swapchain.as_ref().unwrap()
             )
         };
@@ -334,6 +348,15 @@ impl<B: Backend> RendererState<B> {
                     CommandPoolCreateFlags::TRANSIENT,
                 )
                 .expect("Can't create command pool")
+        };
+
+        self.color_image = unsafe {
+            ColorImage::new(
+                Rc::clone(&self.device),
+                &self.backend.adapter,
+                self.swapchain.as_ref().unwrap(),
+                &mut staging_command_pool
+            )
         };
 
         self.depth_image = unsafe {
@@ -352,6 +375,7 @@ impl<B: Backend> RendererState<B> {
                 Rc::clone(&self.device),
                 &self.render_pass,
                 self.swapchain.as_mut().unwrap(),
+                &self.color_image,
                 &self.depth_image
             )
         };
@@ -380,6 +404,7 @@ impl<B: Backend> RendererState<B> {
         self.pipeline = unsafe {
             PipelineState::new(
                 Rc::clone(&self.device),
+                &self.backend.adapter,
                 vec![self.desc_set_layout.get_layout()],
                 self.render_pass.render_pass.as_ref().unwrap(),
                 self.swapchain.as_mut().unwrap(),
@@ -396,7 +421,6 @@ impl<B: Backend> RendererState<B> {
                 &self.backend.adapter.memory_types,
             )
         };
-
 
         self.index_buffer = unsafe {
             IndexBuffer::new(

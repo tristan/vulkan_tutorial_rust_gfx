@@ -3,6 +3,7 @@ use std::rc::Rc;
 use gfx_hal::{Backend, Device, Primitive};
 use gfx_hal::pso;
 use super::device::DeviceState;
+use super::adapter::AdapterState;
 use super::swapchain::SwapchainState;
 use super::primitives;
 
@@ -19,6 +20,7 @@ pub(super) struct PipelineState<B: Backend> {
 impl<B: Backend> PipelineState<B> {
     pub(super) unsafe fn new<IS>(
         device_ptr: Rc<RefCell<DeviceState<B>>>,
+        adapter: &AdapterState<B>,
         desc_layouts: IS,
         render_pass: &B::RenderPass,
         swapchain: &SwapchainState<B>,
@@ -118,6 +120,16 @@ impl<B: Backend> PipelineState<B> {
                     },
                     depth_bounds: false,
                     stencil: pso::StencilTest::Off
+                };
+
+                pipeline_desc.multisampling = {
+                    Some(pso::Multisampling {
+                        rasterization_samples: adapter.get_max_usable_sample_count(),
+                        sample_shading: None,
+                        sample_mask: !0,
+                        alpha_coverage: false,
+                        alpha_to_one: false
+                    })
                 };
 
                 device.create_graphics_pipeline(&pipeline_desc, None)

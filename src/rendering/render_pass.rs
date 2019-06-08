@@ -6,6 +6,7 @@ use gfx_hal::image::Layout;
 use gfx_hal::pass;
 use gfx_hal::pso;
 use super::device::DeviceState;
+use super::adapter::AdapterState;
 use super::swapchain::SwapchainState;
 
 pub(super) struct RenderPassState<B: Backend> {
@@ -16,23 +17,27 @@ pub(super) struct RenderPassState<B: Backend> {
 impl<B: Backend> RenderPassState<B> {
     pub(super) unsafe fn new(
         device: Rc<RefCell<DeviceState<B>>>,
+        adapter: &AdapterState<B>,
         swapchain: &SwapchainState<B>
     ) -> Self {
         let render_pass = {
+
+            let samples = adapter.get_max_usable_sample_count();
+
             let color_attachment = pass::Attachment {
                 format: Some(swapchain.format.clone()),
-                samples: 1,
+                samples: samples,
                 ops: pass::AttachmentOps::new(
                     pass::AttachmentLoadOp::Clear,
                     pass::AttachmentStoreOp::Store,
                 ),
                 stencil_ops: pass::AttachmentOps::DONT_CARE,
-                layouts: Layout::Undefined..Layout::Present
+                layouts: Layout::Undefined..Layout::ColorAttachmentOptimal
             };
 
             let depth_attachment = pass::Attachment {
                 format: device.borrow().optimal_depth_format(),
-                samples: 1,
+                samples: samples,
                 ops: pass::AttachmentOps::new(
                     pass::AttachmentLoadOp::Clear,
                     pass::AttachmentStoreOp::DontCare,
@@ -41,11 +46,22 @@ impl<B: Backend> RenderPassState<B> {
                 layouts: Layout::Undefined..Layout::DepthStencilAttachmentOptimal
             };
 
+            let color_attachment_resolve = pass::Attachment {
+                format: Some(swapchain.format.clone()),
+                samples: 1,
+                ops: pass::AttachmentOps::new(
+                    pass::AttachmentLoadOp::DontCare,
+                    pass::AttachmentStoreOp::Store,
+                ),
+                stencil_ops: pass::AttachmentOps::DONT_CARE,
+                layouts: Layout::Undefined..Layout::Present
+            };
+
             let subpass = pass::SubpassDesc {
                 colors: &[(0, Layout::ColorAttachmentOptimal)],
                 depth_stencil: Some(&(1, Layout::DepthStencilAttachmentOptimal)),
                 inputs: &[],
-                resolves: &[],
+                resolves: &[(2, Layout::ColorAttachmentOptimal)],
                 preserves: &[],
             };
 
@@ -62,7 +78,9 @@ impl<B: Backend> RenderPassState<B> {
             device
                 .borrow()
                 .device
-                .create_render_pass(&[color_attachment, depth_attachment],
+                .create_render_pass(&[color_attachment,
+                                      depth_attachment,
+                                      color_attachment_resolve],
                                     &[subpass],
                                     &[dependency])
                 .ok()

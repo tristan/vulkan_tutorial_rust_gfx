@@ -86,7 +86,7 @@ impl<B: Backend> CommandBufferState<B> {
                         h: swapchain.extent.height as i16,
                     },
                     &[command::ClearValue::Color(
-                        command::ClearColor::Float([
+                        command::ClearColor::Sfloat([
                             0.0, 0.0, 0.0, 1.0,
                         ])
                     ), command::ClearValue::DepthStencil(

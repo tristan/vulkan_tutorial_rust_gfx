@@ -310,7 +310,7 @@ unsafe fn copy_command_buffer<B>(
     cmd_buffer.finish();
 
     let queue = &mut device_ptr.borrow_mut().queues.queues[0];
-    queue.submit_nosemaphores(std::iter::once(&cmd_buffer), None);
+    queue.submit_without_semaphores(std::iter::once(&cmd_buffer), None);
     queue.wait_idle().unwrap();
     // explicit cmd_buffer free on Drop
 }
