@@ -19,17 +19,17 @@ use image;
 
 use super::adapter::AdapterState;
 use super::device::DeviceState;
+use super::swapchain::SwapchainState;
 use super::descriptors::DescriptorSet;
 use super::buffer::TextureBuffer;
 
 pub(super) const CHALET_JPG_DATA: &'static [u8] = include_bytes!("../../textures/chalet.jpg");
 
 unsafe fn create_image<B: Backend>(
-    device: &B::Device, adapter: &AdapterState<B>, width: u32, height: u32,
+    device: &B::Device, adapter: &AdapterState<B>, kind: Kind,
     format: Format, tiling: Tiling, usage: ImageUsage,
     properties: MemoryProperties, mip_levels: u8
 ) -> (B::Image, B::Memory) {
-    let kind = Kind::D2(width as Size, height as Size, 1, 1);
     let mut image = device
         .create_image(
             kind, // kind
@@ -99,7 +99,7 @@ impl<B: Backend> Texture<B> {
         let (image, memory) = create_image(
             &device_ptr.borrow().device,
             &adapter,
-            width, height,
+            Kind::D2(width as Size, height as Size, 1, 1),
             Rgba8Unorm::SELF,
             Tiling::Optimal,
             ImageUsage::TRANSFER_SRC | ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
@@ -355,11 +355,12 @@ impl<B: Backend> DepthImage<B> {
 
         // find optimal depth format
         let format = device_ptr.borrow().optimal_depth_format().unwrap();
+        let samples = adapter.get_max_usable_sample_count();
 
         let (image, memory) = create_image(
             &device_ptr.borrow().device,
             &adapter,
-            width, height,
+            Kind::D2(width as Size, height as Size, 1, samples),
             format,
             Tiling::Optimal,
             ImageUsage::DEPTH_STENCIL_ATTACHMENT,
@@ -423,11 +424,106 @@ impl<B: Backend> DepthImage<B> {
             image: Some(image),
             image_view: Some(image_view)
         }
-
     }
 }
 
 impl<B: Backend> Drop for DepthImage<B> {
+    fn drop(&mut self) {
+        let device = &self.device.borrow().device;
+        unsafe {
+            device.destroy_image_view(self.image_view.take().unwrap());
+            device.destroy_image(self.image.take().unwrap());
+            device.free_memory(self.memory.take().unwrap());
+        }
+    }
+}
+
+
+pub(super) struct ColorImage<B: Backend> {
+    device: Rc<RefCell<DeviceState<B>>>,
+    memory: Option<B::Memory>,
+    image: Option<B::Image>,
+    pub(super) image_view: Option<B::ImageView>
+}
+
+impl<B: Backend> ColorImage<B> {
+    pub(super) unsafe fn new(
+        device_ptr: Rc<RefCell<DeviceState<B>>>,
+        adapter: &AdapterState<B>,
+        swapchain: &SwapchainState<B>,
+        command_pool: &mut CommandPool<B, Graphics>,
+    ) -> Self {
+
+        let width = swapchain.extent.width;
+        let height = swapchain.extent.height;
+        let samples = adapter.get_max_usable_sample_count();
+
+        let (image, memory) = create_image(
+            &device_ptr.borrow().device,
+            &adapter,
+            Kind::D2(width as Size, height as Size, 1, samples),
+            swapchain.format,
+            Tiling::Optimal,
+            ImageUsage::TRANSIENT_ATTACHMENT | ImageUsage::COLOR_ATTACHMENT,
+            MemoryProperties::DEVICE_LOCAL,
+            1,
+        );
+
+        let image_view = {
+            let device = &device_ptr.borrow().device;
+            let image_view = device
+                .create_image_view(
+                    &image,
+                    ViewKind::D2,
+                    swapchain.format,
+                    Swizzle::NO,
+                    SubresourceRange {
+                        aspects: Aspects::COLOR,
+                        levels: 0..1,
+                        layers: 0..1,
+                    }
+                )
+                .unwrap();
+            image_view
+        };
+
+        {
+            let mut cmd_buffer = command_pool.acquire_command_buffer::<command::OneShot>();
+            cmd_buffer.begin();
+
+            let image_barrier = Barrier::Image {
+                states: (Access::empty(), Layout::Undefined)
+                    ..(Access::COLOR_ATTACHMENT_READ | Access::COLOR_ATTACHMENT_WRITE, Layout::ColorAttachmentOptimal),
+                target: &image,
+                families: None,
+                range: SubresourceRange {
+                    aspects: Aspects::COLOR,
+                    levels: 0..1,
+                    layers: 0..1,
+                },
+            };
+
+            cmd_buffer.pipeline_barrier(
+                PipelineStage::TOP_OF_PIPE..PipelineStage::COLOR_ATTACHMENT_OUTPUT,
+                MemoryDependencies::empty(),
+                &[image_barrier]
+            );
+
+            cmd_buffer.finish();
+        }
+
+        ColorImage {
+            device: device_ptr,
+            memory: Some(memory),
+            image: Some(image),
+            image_view: Some(image_view)
+        }
+
+    }
+}
+
+
+impl<B: Backend> Drop for ColorImage<B> {
     fn drop(&mut self) {
         let device = &self.device.borrow().device;
         unsafe {

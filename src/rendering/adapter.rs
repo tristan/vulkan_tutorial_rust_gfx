@@ -28,4 +28,18 @@ impl<B: Backend> AdapterState<B> {
             limits
         }
     }
+
+    pub(super) fn get_max_usable_sample_count(&self) -> u8 {
+        let counts = std::cmp::min(
+            self.limits.framebuffer_color_samples_count,
+            self.limits.framebuffer_depth_samples_count
+        );
+        if counts & 64 > 0 { return 64; }
+        if counts & 32 > 0 { return 32; }
+        if counts & 16 > 0 { return 16; }
+        if counts & 8 > 0 { return 8; }
+        if counts & 4 > 0 { return 4; }
+        if counts & 2 > 0 { return 2; }
+        return 1;
+    }
 }

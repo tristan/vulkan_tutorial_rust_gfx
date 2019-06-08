@@ -7,7 +7,7 @@ use gfx_hal::image::{Extent, ViewKind};
 use super::device::DeviceState;
 use super::render_pass::RenderPassState;
 use super::swapchain::SwapchainState;
-use super::images::DepthImage;
+use super::images::{DepthImage, ColorImage};
 use super::constants::COLOR_RANGE;
 
 pub(super) struct FramebufferState<B: Backend> {
@@ -21,6 +21,7 @@ impl<B: Backend> FramebufferState<B> {
         device: Rc<RefCell<DeviceState<B>>>,
         render_pass: &RenderPassState<B>,
         swapchain: &mut SwapchainState<B>,
+        color_image: &ColorImage<B>,
         depth_image: &DepthImage<B>
     ) -> Self {
         let (frame_images, framebuffers) = {
@@ -47,15 +48,20 @@ impl<B: Backend> FramebufferState<B> {
                 })
                 .collect::<Vec<_>>();
 
+            let color_image_view = color_image.image_view.as_ref().unwrap();
             let depth_image_view = depth_image.image_view.as_ref().unwrap();
 
             let fbos = pairs
                 .iter()
-                .zip(std::iter::repeat(depth_image_view))
-                .map(|(&(_, ref rtv), ref dv)| {
-                    let attachments = vec![
+                .zip(std::iter::repeat((color_image_view, depth_image_view)))
+                .map(|(&(_, ref rtv), (ref cv, ref dv))| {
+                    // TODO: why does the order matter here
+                    // and why is it different from the
+                    // vulkan tutorials
+                    let attachments: Vec<&B::ImageView> = vec![
                         rtv,
-                        dv
+                        dv,
+                        cv,
                     ];
                     device
                         .borrow()
